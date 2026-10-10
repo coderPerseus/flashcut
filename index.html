@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>LoL 高光剪辑</title>
+    <link rel="stylesheet" href="./src/style.css" />
+  </head>
+  <body>
+    <header>
+      <div class="brand">
+        <span class="logo">⚔</span>
+        <div>
+          <h1>LoL 高光剪辑</h1>
+          <p class="muted">Clef-omni 逐段判定 · ffmpeg 自动剪辑</p>
+        </div>
+      </div>
+      <button id="pick" class="primary">选择比赛视频</button>
+    </header>
+
+    <section id="empty" class="empty">
+      <p>选择一场英雄联盟比赛录像，应用会把它切成小段，交给 Clef-omni（Jev 兼容的决策模型）逐段判断要不要保留，再用 ffmpeg 拼出精彩集锦。</p>
+    </section>
+
+    <main id="workspace" hidden>
+      <section class="card source">
+        <div class="source-meta">
+          <div>
+            <div id="src-name" class="filename"></div>
+            <div id="src-meta" class="muted"></div>
+          </div>
+          <div class="actions">
+            <button id="analyze" class="primary">开始分析</button>
+            <button id="cancel" hidden>停止</button>
+          </div>
+        </div>
+        <div class="options">
+          <label>
+            每段长度
+            <select id="opt-seg">
+              <option value="10">10 秒</option>
+              <option value="15">15 秒</option>
+              <option value="20">20 秒</option>
+              <option value="30">30 秒</option>
+            </select>
+          </label>
+          <label>
+            保留概率 ≥ <b id="opt-keep-v"></b>
+            <input id="opt-keep" type="range" min="0.5" max="1.01" step="0.01" />
+          </label>
+          <label>
+            精彩分 ≥ <b id="opt-score-v"></b>
+            <input id="opt-score" type="range" min="1" max="4.01" step="0.05" />
+          </label>
+          <label class="check"><input id="opt-fill" type="checkbox" /> 补齐两段之间的单个空隙</label>
+        </div>
+        <div id="progress" class="progress" hidden><div class="bar"></div><span></span></div>
+        <p id="error" class="error" hidden></p>
+      </section>
+
+      <section class="card">
+        <div class="row">
+          <h2>时间线</h2>
+          <div id="stats" class="muted"></div>
+        </div>
+        <div id="timeline" class="timeline"></div>
+        <div class="legend muted">
+          <span><i class="sw kept"></i>保留</span>
+          <span><i class="sw dropped"></i>丢弃</span>
+          <span><i class="sw failed"></i>失败</span>
+          <span>柱高 = 精彩分（0–4）。点击一段预览，再点一次切换保留/丢弃。</span>
+        </div>
+        <div id="detail" class="detail muted">悬停或点击某一段查看模型判定。</div>
+      </section>
+
+      <section class="players">
+        <div class="card">
+          <div class="row"><h2>原视频</h2></div>
+          <video id="src-video" controls preload="metadata"></video>
+        </div>
+        <div class="card">
+          <div class="row">
+            <h2>精彩集锦</h2>
+            <div class="actions">
+              <button id="render" class="primary" disabled>生成集锦</button>
+              <button id="reveal" hidden>在 Finder 中显示</button>
+            </div>
+          </div>
+          <video id="out-video" controls preload="metadata" hidden></video>
+          <div id="out-empty" class="placeholder muted">分析完成后点击“生成集锦”。</div>
+          <div id="out-meta" class="muted"></div>
+        </div>
+      </section>
+    </main>
+    <script type="module" src="./src/main.ts"></script>
+  </body>
+</html>
