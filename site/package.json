@@ -1,0 +1,15 @@
+{
+  "name": "flashcut-site",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "cf dev",
+    "build": "vite build",
+    "deploy": "cf deploy"
+  },
+  "devDependencies": {
+    "@cloudflare/vite-plugin": "2.0.0-beta.sha-91c870c02",
+    "cf": "^1.0.0-beta.5",
+    "vite": "^8"
+  }
+}

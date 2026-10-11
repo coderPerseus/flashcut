@@ -1,4 +1,4 @@
-<p align="center"><img src="site/icon-512.png" width="128" alt="闪剪" /></p>
+<p align="center"><img src="site/public/icon-512.png" width="128" alt="闪剪" /></p>
 
 <h1 align="center">闪剪 FlashCut</h1>
 
@@ -7,7 +7,7 @@
 
 打开任意视频，告诉闪剪“只保留击杀和团战，控制在 5 分钟以内”。它会逐段看完视频（画面和声音），按要求挑出片段，加上 Remotion 动效并导出。另外还能对照语音或画面校对字幕。
 
-![闪剪剪辑界面](site/img/edit.jpg)
+![闪剪剪辑界面](site/public/img/edit.jpg)
 
 ## 功能
 

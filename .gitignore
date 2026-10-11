@@ -5,3 +5,6 @@ node_modules/
 mygo_windows_*.syso
 output/
 .DS_Store
+site/node_modules/
+site/.cloudflare/
+site/dist/

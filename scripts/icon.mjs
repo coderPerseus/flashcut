@@ -8,7 +8,7 @@ const render = (size) => new Resvg(svg, { fitTo: { mode: "width", value: size },
 
 mkdirSync(new URL("../resources/", import.meta.url), { recursive: true });
 writeFileSync(new URL("../resources/icon.png", import.meta.url), render(1024));
-mkdirSync(new URL("../site/", import.meta.url), { recursive: true });
-writeFileSync(new URL("../site/icon-512.png", import.meta.url), render(512));
-writeFileSync(new URL("../site/favicon.png", import.meta.url), render(64));
-console.log("wrote resources/icon.png, site/icon-512.png, site/favicon.png");
+mkdirSync(new URL("../site/public/", import.meta.url), { recursive: true });
+writeFileSync(new URL("../site/public/icon-512.png", import.meta.url), render(512));
+writeFileSync(new URL("../site/public/favicon.png", import.meta.url), render(64));
+console.log("wrote resources/icon.png, site/public/icon-512.png, site/public/favicon.png");
