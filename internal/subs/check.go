@@ -421,8 +421,9 @@ func (c *Checker) checkOne(ctx context.Context, j *Job, it Item, prev, next stri
 		// Speech recognition is weakest on names and on the edges of a cue,
 		// so edits that change Latin-script names or only delete words are
 		// reported for review instead of applied.
-		// Text read from the screen is exact, so only audio needs this care.
-		if j.Source != SourceBurned && (reLatin.MatchString(e.From) || e.To == "") {
+		// Recognition (of speech or of on-screen text) is weakest on names,
+		// and speech recognition on the edges of a cue.
+		if reLatin.MatchString(e.From) || (j.Source != SourceBurned && e.To == "") {
 			desc := fmt.Sprintf("“%s”→“%s”", e.From, e.To)
 			if e.To == "" {
 				desc = fmt.Sprintf("删去“%s”", e.From)

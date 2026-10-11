@@ -1,7 +1,11 @@
-import { Channel } from "mygo-runtime";
-import { Studio, type EffectSettings, type Event, type ExportResult, type Quality, type Range, type Segment, type View } from "./mygo";
-import { $, attempt, clock, escapeHTML, mb, message, toast } from "./ui";
-import { examplesFor, initTemplates, renderPicker } from "./templates";
+import { Channel, onFileDrop } from "mygo-runtime";
+import { Studio, type EffectSettings, type Event, type ExportResult, type Range, type Segment, type View } from "./mygo";
+import { iconButton, icons } from "./icons";
+import { initLayout, isShown, togglePanel, type PanelName } from "./layout";
+import { initSettings, openSettings } from "./settings";
+import { examplesFor, initTemplates, openManager, renderPicker } from "./templates";
+import { initSubs, subsDrop, subsHome, subsToolbar } from "./subtitles";
+import { $, attempt, clock, el, escapeHTML, mb, toast } from "./ui";
 
 let view: View | null = null;
 let selected = -1;
@@ -9,50 +13,139 @@ let busy: "" | "chat" | "analyze" | "export" = "";
 let running: Channel<Event> | null = null;
 let pendingText = "";
 let lastExport: ExportResult | null = null;
+let mode: "edit" | "subs" = "edit";
 const project = () => view?.project ?? null;
 const MODE_LABELS: Record<string, string> = { keep: "保留", drop: "去掉", boost: "加分", marker: "节点", opening: "开局", ending: "结尾" };
+const VIDEO_EXT = /\.(mp4|mov|m4v|mkv|webm|avi|flv|ts|mts|wmv|mpg|mpeg)$/i;
+const SUB_EXT = /\.(srt|vtt|ass|ssa)$/i;
+
+// ---- toolbar ----
+
+function panelToggle(name: PanelName, icon: "sidebarLeft" | "sidebarRight" | "panelBottom", title: string) {
+  const b = iconButton(icon, title);
+  b.classList.toggle("on", isShown(name));
+  b.onclick = () => b.classList.toggle("on", togglePanel(name));
+  return b;
+}
+
+function renderToolbar() {
+  const bar = $("#toolbar");
+  const sep = () => el("span", { class: "sep" });
+  const gear = iconButton("gear", "设置（⌘,）");
+  gear.onclick = () => openSettings();
+  if (mode === "subs") {
+    bar.replaceChildren(...subsToolbar(), sep(), panelToggle("subs-left", "sidebarLeft", "显示 / 隐藏字幕列表"), panelToggle("subs-right", "sidebarRight", "显示 / 隐藏详情"), sep(), gear);
+    return;
+  }
+  if (!project()) {
+    const open = iconButton("open", "打开视频（⌘O）");
+    open.onclick = pick;
+    bar.replaceChildren(open, sep(), gear);
+    return;
+  }
+  const open = iconButton("open", "打开视频（⌘O）");
+  open.onclick = pick;
+  const undoBtn = iconButton("undo", "撤销（⌘Z）");
+  undoBtn.id = "undo";
+  undoBtn.onclick = undo;
+  const rulesBtn = iconButton("sliders", "剪辑要求");
+  rulesBtn.id = "rules-btn";
+  rulesBtn.onclick = () => toggleRules(rulesBtn);
+  const tpl = iconButton("template", "模板");
+  tpl.onclick = () => openManager();
+  const exp = el("button", { class: "primary", id: "export", title: "导出成片（⌘E）" });
+  exp.innerHTML = `${icons.export}<span style="margin-left:4px">导出</span>`;
+  exp.style.display = "inline-flex";
+  exp.style.alignItems = "center";
+  exp.onclick = exportVideo;
+  bar.replaceChildren(
+    open, undoBtn, sep(), rulesBtn, tpl, sep(),
+    panelToggle("edit-left", "sidebarLeft", "显示 / 隐藏片段列表"),
+    panelToggle("edit-bottom", "panelBottom", "显示 / 隐藏时间线"),
+    panelToggle("edit-right", "sidebarRight", "显示 / 隐藏聊天"),
+    sep(), gear, exp,
+  );
+  renderBusy();
+}
+
+function setMode(m: "edit" | "subs") {
+  mode = m;
+  for (const b of document.querySelectorAll<HTMLButtonElement>(".segmented button")) b.classList.toggle("active", b.dataset.mode === m);
+  $("#subs").hidden = m !== "subs";
+  $("#edit").hidden = m !== "edit" || !project();
+  $("#home").hidden = m !== "edit" || !!project();
+  $("#rules-pop").hidden = true;
+  $("#project-name").textContent = m === "edit" && project() ? `${project()!.source.path.split("/").pop()} · ${clock(project()!.source.duration)}` : "";
+  if (m === "subs") subsHome();
+  renderToolbar();
+}
+for (const b of document.querySelectorAll<HTMLButtonElement>(".segmented button")) b.onclick = () => setMode(b.dataset.mode as "edit" | "subs");
+
+// ---- rules popover ----
+
+function toggleRules(anchor: HTMLElement) {
+  const pop = $("#rules-pop");
+  if (!pop.hidden) {
+    pop.hidden = true;
+    return;
+  }
+  const r = anchor.getBoundingClientRect();
+  pop.hidden = false;
+  pop.style.top = `${r.bottom + 8}px`;
+  pop.style.left = `${Math.max(12, Math.min(window.innerWidth - pop.offsetWidth - 12, r.right - pop.offsetWidth / 2))}px`;
+}
+document.addEventListener("pointerdown", (e) => {
+  const pop = $("#rules-pop");
+  const t = e.target as HTMLElement;
+  if (!pop.hidden && !pop.contains(t) && !t.closest("#rules-btn") && !t.closest("dialog")) pop.hidden = true;
+});
 
 // ---- home ----
 
 async function showHome() {
   view = null;
-  $("#home").hidden = false;
-  $("#workspace").hidden = true;
-  $("#export").hidden = true;
-  $("#undo").hidden = true;
-  $("#project-name").textContent = "说一句话，剪好一条视频";
-  const recent = (await attempt(() => Studio.recent())) ?? [];
+  setMode("edit");
+  const recent = ((await attempt(() => Studio.recent())) ?? []).filter((r) => !!r);
   const box = $("#recent");
   box.replaceChildren();
-  if (recent.length) {
-    const h = document.createElement("h3");
-    h.textContent = "最近的项目";
-    box.append(h);
-  }
+  if (recent.length) box.append(el("h3", { textContent: "最近的剪辑" }));
   for (const r of recent) {
-    const item = document.createElement("div");
-    item.className = "recent-item" + (r.missing ? " missing" : "");
-    const left = document.createElement("div");
-    const name = document.createElement("div");
-    name.className = "name";
-    name.textContent = r.name;
-    const meta = document.createElement("div");
-    meta.className = "muted";
-    meta.textContent = r.missing
-      ? "原视频已移动或删除"
-      : `${clock(r.duration)} → 成片 ${clock(r.keptSeconds)} · ${new Date(r.updatedAt).toLocaleString()}`;
-    left.append(name, meta);
-    const forget = document.createElement("button");
-    forget.className = "small";
-    forget.textContent = "移除";
+    const forget = el("button", { class: "small", textContent: "移除" });
     forget.onclick = async (e) => {
       e.stopPropagation();
-      await attempt(() => Studio.forget(r.id));
+      await attempt(() => Studio.forget(r!.id));
       showHome();
     };
-    item.append(left, forget);
-    if (!r.missing) item.onclick = async () => openView(await attempt(() => Studio.open(r.id)));
+    const item = el(
+      "div",
+      { class: "recent-item" + (r!.missing ? " missing" : "") },
+      el(
+        "div",
+        {},
+        el("div", { class: "name", textContent: r!.name }),
+        el("div", { class: "meta", textContent: r!.missing ? "原视频已移动或删除" : `${clock(r!.duration)} → 成片 ${clock(r!.keptSeconds)} · ${new Date(r!.updatedAt).toLocaleString()}` }),
+      ),
+      forget,
+    );
+    if (!r!.missing) item.onclick = async () => openView(await attempt(() => Studio.open(r!.id)));
     box.append(item);
+  }
+  const subsRecent = ((await attempt(() => Studio.subsRecent())) ?? []).filter((r) => !!r?.job);
+  const sbox = $("#recent-subs");
+  sbox.replaceChildren();
+  if (subsRecent.length) sbox.append(el("h3", { textContent: "最近的字幕校对" }));
+  for (const r of subsRecent) {
+    const j = r!.job!;
+    const item = el(
+      "div",
+      { class: "recent-item" },
+      el("div", {}, el("div", { class: "name", textContent: j.subPath.split("/").pop() }), el("div", { class: "meta", textContent: `${j.video.path.split("/").pop()} · ${new Date(j.updatedAt).toLocaleString()}` })),
+    );
+    item.onclick = () => {
+      setMode("subs");
+      subsDrop([], j.id);
+    };
+    sbox.append(item);
   }
   renderConnection();
 }
@@ -62,20 +155,17 @@ async function pick() {
   const v = await attempt(() => Studio.pickVideo());
   if (v) openView(v);
 }
-$("#open").onclick = pick;
 $("#open-big").onclick = pick;
+$("#subs-big").onclick = () => setMode("subs");
 
 function openView(v: View | null | undefined) {
   if (!v?.project) return;
   selected = -1;
   lastExport = null;
-  $("#result").hidden = true;
+  view = v;
+  setMode("edit");
+  $<HTMLVideoElement>("#video").src = v.mediaUrl;
   setView(v);
-  $("#home").hidden = true;
-  $("#workspace").hidden = false;
-  const video = $<HTMLVideoElement>("#video");
-  video.src = v.mediaUrl;
-  $<HTMLInputElement>("#target").value = v.project.edits.targetSeconds ? String(Math.round(v.project.edits.targetSeconds)) : "";
   $("#input").focus();
 }
 
@@ -84,20 +174,17 @@ function openView(v: View | null | undefined) {
 function setView(v: View | null | undefined) {
   if (!v?.project) return;
   view = v;
-  const p = v.project;
-  $("#project-name").textContent = `${p.source.path.split("/").pop()} · ${clock(p.source.duration)}`;
-  $("#export").hidden = false;
-  $("#undo").hidden = false;
   renderSummary();
   renderTimeline();
   renderRanges();
+  renderClips();
   renderRules();
   renderOptions();
-  renderMessages();
+  renderMessages(busy === "chat" ? pendingText : "");
   renderChips();
   renderBusy();
   renderPicker();
-  showDetail(p.segments[selected]);
+  showDetail(v.project.segments[selected]);
 }
 
 function renderSummary() {
@@ -113,48 +200,73 @@ function renderSummary() {
 function renderTimeline() {
   const p = project();
   if (!p) return;
-  const tl = $("#timeline");
-  const playhead = $("#playhead");
   const bars = p.segments.map((s) => {
-    const el = document.createElement("div");
-    el.className = "seg";
-    const bar = document.createElement("i");
+    const seg = el("div", { class: "seg" });
+    const bar = el("i");
     const interest = s.answers?.interest;
-    if (s.error) el.classList.add("failed");
-    else if (interest === undefined) el.classList.add("pending");
+    if (s.error) seg.classList.add("failed");
+    else if (interest === undefined) seg.classList.add("pending");
     else bar.style.height = `${Math.max(4, (interest / 4) * 100)}%`;
-    if (s.kept) el.classList.add("kept");
-    if (p.edits.overrides?.[s.index] !== undefined) el.classList.add("pinned");
-    if (s.index === selected) el.classList.add("selected");
-    el.append(bar);
-    el.onmouseenter = () => showDetail(s);
-    el.onmouseleave = () => showDetail(project()?.segments[selected]);
-    el.onclick = () => selectSegment(s.index, true);
-    return el;
+    if (s.kept) seg.classList.add("kept");
+    if (p.edits.overrides?.[s.index] !== undefined) seg.classList.add("pinned");
+    if (s.index === selected) seg.classList.add("selected");
+    seg.append(bar);
+    seg.title = `${clock(s.start)} – ${clock(s.end)}${s.reason ? " · " + s.reason : ""}`;
+    seg.onmouseenter = () => showDetail(s);
+    seg.onmouseleave = () => showDetail(project()?.segments[selected]);
+    seg.onclick = () => selectSegment(s.index, true);
+    return seg;
   });
-  tl.replaceChildren(...bars, playhead);
+  $("#timeline").replaceChildren(...bars, $("#playhead"));
 }
 
 function renderRanges() {
   const p = project();
   if (!p || !view) return;
-  const bar = $("#ranges-bar");
-  bar.replaceChildren(
+  $("#ranges-bar").replaceChildren(
     ...view.ranges.map((r) => {
-      const el = document.createElement("span");
-      el.style.left = `${(r.start / p.source.duration) * 100}%`;
-      el.style.width = `${((r.end - r.start) / p.source.duration) * 100}%`;
-      return el;
+      const s = el("span");
+      s.style.left = `${(r.start / p.source.duration) * 100}%`;
+      s.style.width = `${((r.end - r.start) / p.source.duration) * 100}%`;
+      return s;
     }),
   );
 }
 
+function renderClips() {
+  const p = project();
+  if (!p || !view) return;
+  $("#clip-count").textContent = view.ranges.length ? `${view.ranges.length}` : "";
+  const video = $<HTMLVideoElement>("#video");
+  const items = view.ranges.map((r, i) => {
+    const row = el(
+      "div",
+      { class: "row-item" },
+      el("div", { class: "time" }, el("span", { class: "dot fixed" }), `#${i + 1}  ${clock(r.start)} – ${clock(r.end)}  ·  ${Math.round(r.end - r.start)} 秒`),
+      el("div", { class: "text muted", textContent: reasonAt(r) }),
+    );
+    row.onclick = () => {
+      video.currentTime = r.start + 0.01;
+      for (const x of document.querySelectorAll("#clips .row-item")) x.classList.remove("active");
+      row.classList.add("active");
+    };
+    return row;
+  });
+  $("#clips").replaceChildren(...(items.length ? items : [el("div", { class: "empty-note", textContent: "还没有保留的片段。在聊天里说说要求，或点工具栏的剪辑要求 → 智能剪辑。" })]));
+}
+
+/** reasonAt explains a clip by its first kept segment. */
+function reasonAt(r: Range) {
+  const s = project()?.segments.find((s) => s.kept && s.end > r.start + 0.01 && s.start < r.end);
+  return s?.reason ?? "";
+}
+
 function showDetail(s: Segment | undefined) {
-  const el = $("#detail");
+  const box = $("#detail");
   const p = project();
   $("#seg-actions").hidden = !(s && s.index === selected);
   if (!s || !p) {
-    el.textContent = "点击时间线上的一段可以跳转预览，并手动保留或剪掉。";
+    box.textContent = "点击时间线上的一段可以跳转预览，并手动保留或剪掉。";
     return;
   }
   const parts = [`<b>${clock(s.start)} – ${clock(s.end)}</b>`, s.kept ? "<b>保留</b>" : "剪掉"];
@@ -165,14 +277,12 @@ function showDetail(s: Segment | undefined) {
     const v = s.answers?.[r.id];
     if (v !== undefined) {
       const shown = r.question?.type === "score" ? v.toFixed(1) : `${Math.round(v * 100)}%`;
-      parts.push(`${MODE_LABELS[r.mode] ?? r.mode}“${escapeHTML(short(r.text))}” <b>${shown}</b>`);
+      parts.push(`${MODE_LABELS[r.mode] ?? r.mode}“${escapeHTML(r.text.length > 16 ? r.text.slice(0, 15) + "…" : r.text)}” <b>${shown}</b>`);
     }
   }
   if (s.reason) parts.push(escapeHTML(s.reason));
-  el.innerHTML = parts.join(" · ");
+  box.innerHTML = parts.join(" · ");
 }
-
-const short = (t: string) => (t.length > 18 ? t.slice(0, 17) + "…" : t);
 
 function selectSegment(index: number, seek: boolean) {
   const p = project();
@@ -196,68 +306,44 @@ for (const btn of document.querySelectorAll<HTMLButtonElement>("#seg-actions but
 function renderRules() {
   const p = project();
   if (!p) return;
-  const box = $("#rules");
   const chips: HTMLElement[] = p.edits.rules.map((r) => {
-    const el = document.createElement("span");
-    el.className = "rule" + (r.enabled ? "" : " off");
-    el.title = r.text;
-    const tag = document.createElement("span");
-    tag.className = `tag ${r.mode}`;
-    tag.textContent = MODE_LABELS[r.mode] ?? r.mode;
-    const text = document.createElement("span");
-    text.className = "text";
-    text.textContent = r.text;
-    // Sensitivity: right is stricter (a higher probability is needed).
-    const sens = document.createElement("input");
-    sens.type = "range";
     const levels = r.question?.type === "score" && Array.isArray(r.question.criteria) ? r.question.criteria.length : 0;
-    sens.min = levels ? "0" : "0.1";
-    sens.max = levels ? String(levels - 1) : "0.9";
-    sens.step = levels ? "0.25" : "0.05";
-    sens.value = String(r.threshold);
-    sens.className = "sens";
+    const sens = el("input", { type: "range", className: "sens", min: levels ? "0" : "0.1", max: levels ? String(levels - 1) : "0.9", step: levels ? "0.25" : "0.05", value: String(r.threshold) });
     sens.title = `匹配门槛 ${levels ? r.threshold.toFixed(2) + " 级" : Math.round(r.threshold * 100) + "%"}：往左更宽松，往右更严格`;
     sens.onchange = async () => {
       const v = await attempt(() => Studio.setRule(p.id, r.id, r.enabled, Number(sens.value)));
       if (v) setView(v);
     };
-    const toggle = document.createElement("button");
-    toggle.textContent = r.enabled ? "停用" : "启用";
+    const toggle = el("button", { textContent: r.enabled ? "停用" : "启用" });
     toggle.onclick = async () => {
       const v = await attempt(() => Studio.setRule(p.id, r.id, !r.enabled, r.threshold));
       if (v) setView(v);
     };
-    const del = document.createElement("button");
-    del.textContent = "✕";
-    del.title = "删除这条要求";
+    const del = el("button", { textContent: "✕", title: "删除这条要求" });
     del.onclick = async () => {
       const v = await attempt(() => Studio.deleteRule(p.id, r.id));
       if (v) setView(v);
     };
-    el.append(tag, text, sens, toggle, del);
-    return el;
+    return el(
+      "span",
+      { class: "rule" + (r.enabled ? "" : " off"), title: r.text },
+      el("span", { class: `tag ${r.mode}`, textContent: MODE_LABELS[r.mode] ?? r.mode }),
+      el("span", { class: "text", textContent: r.text }),
+      sens,
+      toggle,
+      del,
+    );
   });
   p.edits.ranges.forEach((r, i) => {
-    const el = document.createElement("span");
-    el.className = "rule";
-    const tag = document.createElement("span");
-    tag.className = `tag ${r.keep ? "keep" : "drop"}`;
-    tag.textContent = r.keep ? "保留" : "去掉";
-    const text = document.createElement("span");
-    text.className = "text";
-    text.textContent = `${clock(r.start)} – ${clock(r.end)}`;
-    const del = document.createElement("button");
-    del.textContent = "✕";
+    const del = el("button", { textContent: "✕" });
     del.onclick = async () => {
       const v = await attempt(() => Studio.deleteRange(p.id, i));
       if (v) setView(v);
     };
-    el.append(tag, text, del);
-    chips.push(el);
+    chips.push(el("span", { class: "rule" }, el("span", { class: `tag ${r.keep ? "keep" : "drop"}`, textContent: r.keep ? "保留" : "去掉" }), el("span", { class: "text", textContent: `${clock(r.start)} – ${clock(r.end)}` }), del));
   });
-  box.replaceChildren(...chips);
-  const hasKeep = p.edits.rules.some((r) => r.enabled && r.mode === "keep");
-  $("#interest-opt").hidden = hasKeep;
+  $("#rules").replaceChildren(...chips);
+  $("#interest-opt").hidden = p.edits.rules.some((r) => r.enabled && r.mode === "keep");
   $<HTMLButtonElement>("#analyze").textContent = view!.summary.analyzed < view!.summary.segments ? "智能剪辑" : "重新挑选";
 }
 
@@ -282,13 +368,7 @@ function onOptions() {
   clearTimeout(optTimer);
   optTimer = window.setTimeout(async () => {
     const v = await attempt(() =>
-      Studio.setOptions(
-        p.id,
-        interest,
-        Number($<HTMLInputElement>("#target").value) || 0,
-        $<HTMLInputElement>("#fill").checked,
-        Number($<HTMLSelectElement>("#pad").value),
-      ),
+      Studio.setOptions(p.id, interest, Number($<HTMLInputElement>("#target").value) || 0, $<HTMLInputElement>("#fill").checked, Number($<HTMLSelectElement>("#pad").value)),
     );
     if (v) setView(v);
   }, 150);
@@ -302,17 +382,10 @@ function renderMessages(lastPending = "") {
   const p = project();
   if (!p) return;
   const box = $("#messages");
-  const els = (p.chat ?? []).map((m) => bubble(m.role, m.text));
-  if (lastPending) els.push(bubble("assistant pending", lastPending));
+  const els = (p.chat ?? []).map((m) => el("div", { class: `msg ${m.role}`, textContent: m.text }));
+  if (lastPending) els.push(el("div", { class: "msg assistant pending", textContent: lastPending }));
   box.replaceChildren(...els);
   box.scrollTop = box.scrollHeight;
-}
-
-function bubble(role: string, text: string) {
-  const el = document.createElement("div");
-  el.className = `msg ${role}`;
-  el.textContent = text;
-  return el;
 }
 
 function renderChips() {
@@ -320,31 +393,41 @@ function renderChips() {
   if (!p) return;
   const fromTemplate = examplesFor(p);
   const ideas = fromTemplate.length
-    ? [...fromTemplate, "撤销", "导出"]
+    ? [...fromTemplate, "导出"]
     : p.edits.rules.length
       ? ["再短一点", "撤销", "导出"]
-      : ["保留最精彩的部分", "去掉片头和片尾", "控制在 3 分钟以内", "只保留有人说话的部分"];
+      : ["保留最精彩的部分", "去掉片头和片尾", "控制在 3 分钟以内"];
   $("#chips").replaceChildren(
     ...ideas.map((t) => {
-      const b = document.createElement("button");
-      b.type = "button";
-      b.textContent = t;
+      const b = el("button", { type: "button", textContent: t });
       b.onclick = () => send(t);
       return b;
     }),
   );
 }
 
+async function renderModelChip() {
+  const name = await attempt(() => Studio.chatModelName());
+  const chip = $("#model-chip");
+  chip.textContent = name ?? "";
+  chip.title = `当前聊天模型：${name}。点击切换。`;
+}
+$("#model-chip").onclick = () => openSettings("models");
+
 function renderBusy() {
   const on = busy !== "";
-  for (const id of ["#open", "#undo", "#export", "#analyze", "#tpl-apply", "#tpl-save"]) $<HTMLButtonElement>(id).disabled = on;
-  $<HTMLButtonElement>("#composer button").disabled = on;
+  for (const id of ["#undo", "#export", "#analyze", "#tpl-apply", "#tpl-save"]) {
+    const b = document.querySelector<HTMLButtonElement>(id);
+    if (b) b.disabled = on;
+  }
+  const send = $<HTMLButtonElement>("#send");
+  send.disabled = on;
   $("#progress").hidden = !on;
   if (!on) setProgress(0, 0, "");
 }
 
 function setProgress(done: number, total: number, label: string) {
-  $<HTMLDivElement>(".progress .bar div").style.width = total ? `${(done / total) * 100}%` : busy ? "100%" : "0";
+  $<HTMLDivElement>("#progress .bar div").style.width = total ? `${(done / total) * 100}%` : busy ? "100%" : "0";
   $("#progress-label").textContent = label;
 }
 
@@ -385,7 +468,7 @@ async function run<T>(kind: typeof busy, fn: (ch: Channel<Event>) => Promise<T>)
   try {
     return await fn(running);
   } catch (err) {
-    toast(message(err), true);
+    toast(err instanceof Error ? err.message : String(err), true);
     return undefined;
   } finally {
     busy = "";
@@ -394,7 +477,6 @@ async function run<T>(kind: typeof busy, fn: (ch: Channel<Event>) => Promise<T>)
     renderBusy();
   }
 }
-
 $("#stop").onclick = () => running?.close();
 
 async function send(text: string) {
@@ -404,13 +486,13 @@ async function send(text: string) {
   if (busy) return toast("请等当前操作完成");
   $<HTMLTextAreaElement>("#input").value = "";
   p.chat = [...(p.chat ?? []), { role: "user", text, at: new Date().toISOString() }];
-  renderMessages("…");
+  pendingText = "…";
+  renderMessages(pendingText);
   const res = await run("chat", (ch) => Studio.chat(p.id, text, ch));
   if (res?.view) setView(res.view);
-  else if (view) setView(await attempt(() => Studio.open(p.id)));
+  else setView(await attempt(() => Studio.open(p.id)));
   if (res?.export) exportVideo();
 }
-
 $("#composer").addEventListener("submit", (e) => {
   e.preventDefault();
   send($<HTMLTextAreaElement>("#input").value);
@@ -421,10 +503,12 @@ $("#input").addEventListener("keydown", (e) => {
     send($<HTMLTextAreaElement>("#input").value);
   }
 });
+$("#send").innerHTML = icons.send;
 
 $("#analyze").onclick = async () => {
   const p = project();
   if (!p) return;
+  $("#rules-pop").hidden = true;
   const v = await run("analyze", (ch) => Studio.analyze(p.id, ch));
   if (v) {
     setView(v);
@@ -432,25 +516,17 @@ $("#analyze").onclick = async () => {
   } else setView(await attempt(() => Studio.open(p.id)));
 };
 
-$("#undo").onclick = undo;
 async function undo() {
   const p = project();
   if (!p || busy) return;
   const v = await attempt(() => Studio.undo(p.id));
   if (v) setView(v);
 }
-document.addEventListener("keydown", (e) => {
-  if ((e.metaKey || e.ctrlKey) && e.key === "z" && document.activeElement?.tagName !== "TEXTAREA" && document.activeElement?.tagName !== "INPUT") {
-    e.preventDefault();
-    undo();
-  }
-});
 
-$("#export").onclick = exportVideo;
+// ---- export ----
 
 const fxChecks = { intro: "#fx-intro", transitions: "#fx-transitions", highlights: "#fx-highlights", ending: "#fx-ending", outro: "#fx-outro", progressBar: "#fx-progress" } as const;
 
-/** askEffects shows the export dialog and returns the chosen effects, or null. */
 async function askEffects(id: string): Promise<EffectSettings | null> {
   const fx = await attempt(() => Studio.effectsFor(id));
   if (!fx) return null;
@@ -459,9 +535,9 @@ async function askEffects(id: string): Promise<EffectSettings | null> {
   $<HTMLInputElement>("#fx-subtitle").value = fx.subtitle;
   $<HTMLInputElement>("#fx-accent").value = fx.accent || "#7c5cff";
   for (const [k, sel] of Object.entries(fxChecks)) $<HTMLInputElement>(sel).checked = fx[k as keyof typeof fxChecks];
-  const syncOptions = () => ($("#fx-options").hidden = $<HTMLSelectElement>("#fx-style").value === "none");
-  $("#fx-style").onchange = syncOptions;
-  syncOptions();
+  const sync = () => ($("#fx-options").hidden = $<HTMLSelectElement>("#fx-style").value === "none");
+  $("#fx-style").onchange = sync;
+  sync();
   const d = $<HTMLDialogElement>("#export-dialog");
   d.returnValue = "";
   d.showModal();
@@ -488,15 +564,16 @@ async function exportVideo() {
   const r = await run("export", (ch) => Studio.export(p.id, fx, ch));
   if (!r) return;
   lastExport = r;
-  $("#result").hidden = false;
-  const out = $<HTMLVideoElement>("#out-video");
-  out.src = r.mediaUrl;
+  $<HTMLVideoElement>("#out-video").src = r.mediaUrl;
   $("#out-meta").textContent = `${clock(r.duration)} · ${mb(r.size)} · ${r.path}`;
-  $("#result").scrollIntoView({ behavior: "smooth" });
-  toast("导出完成");
+  $<HTMLDialogElement>("#result-dialog").showModal();
   setView(await attempt(() => Studio.open(p.id)));
 }
 $("#reveal").onclick = () => lastExport && Studio.reveal(lastExport.path);
+$("#result-close").onclick = () => {
+  $<HTMLVideoElement>("#out-video").pause();
+  $<HTMLDialogElement>("#result-dialog").close();
+};
 
 // ---- preview: play only the kept ranges ----
 
@@ -521,54 +598,57 @@ $("#preview").addEventListener("change", () => {
   }
 });
 
-// ---- settings ----
+// ---- keyboard ----
 
-async function renderConnection() {
-  const s = await attempt(() => Studio.getSettings());
-  if (!s) return;
-  const text = s.connected ? `已连接 Cloudflare（${s.connection}）` : s.connection;
-  for (const id of ["#connection", "#home-status"]) {
-    $(id).textContent = s.ffmpeg ? s.ffmpeg : text;
-    $(id).classList.toggle("bad", !s.connected || !!s.ffmpeg);
-  }
-  return s;
-}
-
-$("#settings-btn").onclick = async () => {
-  const s = await renderConnection();
-  if (!s) return;
-  $<HTMLInputElement>("#s-account").value = s.accountId;
-  $<HTMLInputElement>("#s-token").value = "";
-  $<HTMLInputElement>("#s-token").placeholder = s.hasToken ? "已保存（留空则不修改）" : "粘贴 API Token";
-  $<HTMLInputElement>("#s-clear").checked = false;
-  $<HTMLSelectElement>("#s-concurrency").value = String(s.concurrency);
-  $<HTMLSelectElement>("#s-quality").value = s.quality;
-  $<HTMLSelectElement>("#s-template").value = s.defaultTemplate;
-  $("#conn-status").textContent = s.connected ? `当前通过 ${s.connection} 连接` : s.connection;
-  const ff = $("#ffmpeg-status");
-  ff.textContent = s.ffmpeg || "ffmpeg 已就绪";
-  ff.classList.toggle("bad", !!s.ffmpeg);
-  $<HTMLDialogElement>("#settings").showModal();
-};
-
-$<HTMLDialogElement>("#settings").addEventListener("close", async () => {
-  if ($<HTMLDialogElement>("#settings").returnValue !== "save") return;
-  const s = await attempt(() =>
-    Studio.saveSettings(
-      $<HTMLInputElement>("#s-account").value,
-      $<HTMLInputElement>("#s-token").value,
-      $<HTMLInputElement>("#s-clear").checked,
-      Number($<HTMLSelectElement>("#s-concurrency").value),
-      $<HTMLSelectElement>("#s-quality").value as Quality,
-      $<HTMLSelectElement>("#s-template").value,
-    ),
-  );
-  $<HTMLInputElement>("#s-token").value = "";
-  if (s) {
-    toast(s.connected ? "设置已保存" : `设置已保存，但还连不上：${s.connection}`, !s.connected);
-    renderConnection();
+document.addEventListener("keydown", (e) => {
+  const typing = ["TEXTAREA", "INPUT", "SELECT"].includes(document.activeElement?.tagName ?? "");
+  const cmd = e.metaKey || e.ctrlKey;
+  if (cmd && e.key === "z" && !typing) {
+    e.preventDefault();
+    undo();
+  } else if (cmd && e.key === "o") {
+    e.preventDefault();
+    pick();
+  } else if (cmd && e.key === ",") {
+    e.preventDefault();
+    openSettings();
+  } else if (cmd && e.key === "e" && mode === "edit") {
+    e.preventDefault();
+    exportVideo();
+  } else if (e.key === "Escape") {
+    $("#rules-pop").hidden = true;
+  } else if (e.key === " " && !typing && mode === "edit" && project()) {
+    e.preventDefault();
+    video.paused ? video.play() : video.pause();
   }
 });
+
+// ---- dropped files ----
+
+try {
+  onFileDrop(async ({ paths }) => {
+    const videos = paths.filter((p) => VIDEO_EXT.test(p));
+    const subs = paths.filter((p) => SUB_EXT.test(p));
+    if (subs.length || mode === "subs") {
+      setMode("subs");
+      subsDrop(paths);
+      return;
+    }
+    if (videos[0]) openView(await attempt(() => Studio.openPath(videos[0]!)));
+  });
+} catch {
+  /* not running inside the app */
+}
+
+// ---- connection status ----
+
+async function renderConnection() {
+  const ms = await attempt(() => Studio.getModelSettings());
+  const line = $("#home-status");
+  if (!ms) return;
+  line.textContent = ms.cloudflare.connected ? `Cloudflare 已连接（${ms.cloudflare.using}）` : `Cloudflare 未连接：${ms.cloudflare.using}`;
+  line.classList.toggle("bad", !ms.cloudflare.connected);
+}
 
 // ---- automation hooks (used by the self-test) ----
 
@@ -580,6 +660,12 @@ declare global {
       send(text: string): void;
       lastReply(): string;
       selectFirstKept(): void;
+      setMode(m: "edit" | "subs"): void;
+      openRules(): void;
+      openSettings(): void;
+      subs(video: string, sub: string): Promise<void>;
+      subsBusy(): boolean;
+      selectIssue(): void;
     };
   }
 }
@@ -592,12 +678,34 @@ window.flashcut = {
     const s = project()?.segments.find((s) => s.kept);
     if (s) selectSegment(s.index, true);
   },
+  setMode: (m) => setMode(m),
+  openRules: () => {
+    const b = document.querySelector<HTMLElement>("#rules-btn");
+    if (b) toggleRules(b);
+  },
+  openSettings: () => void openSettings(),
+  subs: async (video, sub) => {
+    setMode("subs");
+    await subsDrop([video, sub]);
+    $<HTMLButtonElement>("#subs-run").click();
+  },
+  subsBusy: () => !$("#subs-progress").hidden,
+  selectIssue: () => {
+    const row = [...document.querySelectorAll<HTMLElement>("#cues .row-item")].find((r) => r.querySelector(".dot.fixed"));
+    row?.click();
+  },
 };
 
 // ---- start ----
 
+initLayout();
+initSettings(() => {
+  renderModelChip();
+  renderConnection();
+});
+initSubs();
 await initTemplates({ project, setView, run });
-
+renderModelChip();
 const initial = await attempt(() => Studio.initial());
 if (initial) openView(initial);
 else showHome();

@@ -7,186 +7,210 @@
     <link rel="stylesheet" href="./src/style.css" />
   </head>
   <body>
-    <header>
-      <div class="brand">
-        <span class="logo">⚡</span>
-        <div>
-          <h1>闪剪</h1>
-          <p id="project-name" class="muted">说一句话，剪好一条视频</p>
-        </div>
+    <header class="titlebar">
+      <div class="tb-left">
+        <span class="app-name">闪剪</span>
+        <span id="project-name" class="muted"></span>
       </div>
-      <div class="actions">
-        <button id="open">打开视频</button>
-        <button id="undo" hidden title="撤销 (⌘Z)">撤销</button>
-        <button id="settings-btn" title="设置">设置</button>
-        <button id="export" class="primary" hidden>导出成片</button>
+      <div class="segmented" role="tablist">
+        <button data-mode="edit" class="active" title="按要求剪辑视频">剪辑</button>
+        <button data-mode="subs" title="检查并修正字幕">字幕校对</button>
       </div>
+      <div class="tb-right" id="toolbar"></div>
     </header>
 
+    <!-- Start screen -->
     <section id="home" class="home">
       <div class="hero">
-        <div class="hero-icon">⚡</div>
-        <h2>把长视频剪成精华</h2>
-        <p class="muted">打开任意视频，用一句话说出要求：“只保留进球”“去掉片头广告”“控制在 3 分钟”。闪剪会逐段看完视频，按你的要求挑出片段，再一键导出。</p>
-        <button id="open-big" class="primary big">打开视频</button>
+        <div class="hero-mark">⚡</div>
+        <h1>闪剪</h1>
+        <p class="muted">打开任意视频，用一句话说出要求，闪剪逐段看完视频、挑出片段并导出。也可以把视频文件直接拖进窗口。</p>
+        <div class="hero-actions">
+          <button id="open-big" class="primary big">打开视频…</button>
+          <button id="subs-big" class="big">字幕校对…</button>
+        </div>
         <p id="home-status" class="status-line"></p>
       </div>
-      <div id="recent" class="recent"></div>
+      <div class="recent-cols">
+        <div id="recent" class="recent"></div>
+        <div id="recent-subs" class="recent"></div>
+      </div>
     </section>
 
-    <main id="workspace" hidden>
-      <section class="editor">
-        <div class="card player-card">
-          <video id="video" controls preload="metadata"></video>
+    <!-- Edit workbench -->
+    <main id="edit" class="workbench" hidden>
+      <aside id="edit-left" class="panel side" data-panel="edit-left">
+        <div class="panel-head"><span>片段</span><span id="clip-count" class="muted"></span></div>
+        <div id="clips" class="list"></div>
+      </aside>
+      <div class="splitter v" data-resize="edit-left"></div>
+      <section class="center">
+        <div class="panel player-panel">
+          <div class="video-box"><video id="video" controls preload="metadata"></video></div>
           <div class="player-bar">
-            <label class="check"><input id="preview" type="checkbox" /> 只看成片（跳过被剪掉的部分）</label>
+            <label class="check" title="播放时跳过被剪掉的部分"><input id="preview" type="checkbox" /> 只看成片</label>
             <span id="summary" class="muted"></span>
           </div>
         </div>
-
-        <div class="card">
-          <div class="row">
-            <h3>时间线</h3>
+        <div class="splitter h" data-resize="edit-bottom"></div>
+        <div id="edit-bottom" class="panel timeline-panel" data-panel="edit-bottom">
+          <div class="panel-head">
+            <span>时间线</span>
             <div class="legend muted">
-              <span><i class="sw kept"></i>保留</span>
-              <span><i class="sw dropped"></i>剪掉</span>
-              <span><i class="sw pending"></i>待分析</span>
-              <span><i class="sw failed"></i>失败</span>
-              <span>柱高 = 精彩程度</span>
+              <span><i class="sw kept"></i>保留</span><span><i class="sw dropped"></i>剪掉</span><span><i class="sw pending"></i>待分析</span><span><i class="sw failed"></i>失败</span><span>柱高 = 精彩程度</span>
             </div>
           </div>
-          <div id="timeline" class="timeline"><div id="playhead" class="playhead"></div></div>
-          <div id="ranges-bar" class="ranges-bar"></div>
-          <div id="detail" class="detail muted">点击时间线上的一段可以跳转预览，并手动保留或剪掉。</div>
-          <div id="seg-actions" class="seg-actions" hidden>
-            <button data-mode="keep">保留这段</button>
-            <button data-mode="drop">剪掉这段</button>
-            <button data-mode="auto">交给 AI</button>
+          <div class="timeline-wrap">
+            <div id="timeline" class="timeline"><div id="playhead" class="playhead"></div></div>
+            <div id="ranges-bar" class="ranges-bar"></div>
           </div>
-        </div>
-
-        <div class="card">
-          <div class="row">
-            <h3>剪辑要求</h3>
-            <div class="actions wrap">
-              <select id="tpl-select" title="选择模板"></select>
-              <button id="tpl-apply" class="small">套用模板</button>
-              <button id="tpl-manage" class="small">管理模板</button>
-              <button id="tpl-save" class="small" title="把当前的剪辑要求存成模板">存为模板</button>
-              <button id="analyze" class="small primary">智能剪辑</button>
+          <div class="detail-row">
+            <div id="detail" class="detail muted">点击时间线上的一段可以跳转预览，并手动保留或剪掉。</div>
+            <div id="seg-actions" class="seg-actions" hidden>
+              <button data-mode="keep">保留这段</button><button data-mode="drop">剪掉这段</button><button data-mode="auto">交给 AI</button>
             </div>
           </div>
-          <p id="tpl-current" class="muted note"></p>
-          <div id="rules" class="rules"></div>
-          <div class="options">
-            <label id="interest-opt">
-              精彩程度 ≥ <b id="interest-v"></b>
-              <input id="interest" type="range" min="0.5" max="4" step="0.1" />
-            </label>
-            <label>
-              时长上限
-              <input id="target" type="number" min="0" step="10" placeholder="不限" /> 秒
-            </label>
-            <label>
-              片段前后多留
-              <select id="pad"><option value="0">0 秒</option><option value="1">1 秒</option><option value="2">2 秒</option><option value="4">4 秒</option></select>
-            </label>
-            <label class="check"><input id="fill" type="checkbox" /> 补齐片段间的小空隙</label>
-          </div>
-        </div>
-
-        <div id="result" class="card result" hidden>
-          <div class="row">
-            <h3>已导出</h3>
-            <div class="actions"><button id="reveal" class="small">在 Finder 中显示</button></div>
-          </div>
-          <video id="out-video" controls preload="metadata"></video>
-          <div id="out-meta" class="muted"></div>
         </div>
       </section>
-
-      <aside class="chat card">
-        <div class="chat-head">
-          <h3>聊天剪辑</h3>
-          <span id="connection" class="muted"></span>
+      <div class="splitter v" data-resize="edit-right"></div>
+      <aside id="edit-right" class="panel side chat" data-panel="edit-right">
+        <div class="panel-head">
+          <span>聊天剪辑</span>
+          <button id="model-chip" class="chip" title="当前聊天模型，点击切换"></button>
         </div>
         <div id="messages" class="messages"></div>
         <div id="progress" class="progress" hidden>
-          <div class="progress-text"><span id="progress-label"></span><button id="stop" class="link">停止</button></div>
+          <div class="progress-text"><span id="progress-label"></span><button id="stop" class="link" title="停止当前操作">停止</button></div>
           <div class="bar"><div></div></div>
         </div>
         <div id="chips" class="chips"></div>
         <form id="composer" class="composer">
-          <textarea id="input" rows="2" placeholder="说说想怎么剪，例如：只保留击杀和团战，控制在 5 分钟以内"></textarea>
-          <button class="primary" type="submit">发送</button>
+          <textarea id="input" rows="3" placeholder="说说想怎么剪，例如：只保留击杀和团战，控制在 5 分钟以内"></textarea>
+          <button id="send" type="submit" class="send" title="发送（Enter）"></button>
         </form>
       </aside>
     </main>
 
+    <!-- Subtitle workbench -->
+    <main id="subs" class="workbench" hidden>
+      <aside id="subs-left" class="panel side" data-panel="subs-left">
+        <div class="panel-head"><span>字幕</span><select id="subs-filter" title="筛选">
+          <option value="all">全部</option><option value="issues">有问题的</option><option value="fixed">已修正</option><option value="suspect">需确认</option>
+        </select></div>
+        <div id="cues" class="list"></div>
+      </aside>
+      <div class="splitter v" data-resize="subs-left"></div>
+      <section class="center">
+        <div class="setup-bar">
+          <button id="subs-video" title="选择视频">视频…</button>
+          <span id="subs-video-name" class="muted ellipsis">未选择视频</span>
+          <button id="subs-file" title="选择字幕文件（SRT / VTT / ASS）">字幕…</button>
+          <span id="subs-file-name" class="muted ellipsis">未选择字幕</span>
+          <select id="subs-source" title="字幕对照的来源">
+            <option value="auto">自动判断</option>
+            <option value="audio">对照语音</option>
+            <option value="burned">对照画面字幕</option>
+          </select>
+          <button id="subs-run" class="primary">开始校对</button>
+        </div>
+        <div class="panel player-panel">
+          <div class="video-box">
+            <video id="subs-video-el" controls preload="metadata"></video>
+            <div id="subs-overlay" class="sub-overlay" hidden></div>
+          </div>
+          <div class="player-bar">
+            <span id="subs-summary" class="muted">选择视频和字幕文件后开始校对。</span>
+          </div>
+        </div>
+        <div id="subs-progress" class="progress inline" hidden>
+          <div class="progress-text"><span id="subs-progress-label"></span><button id="subs-stop" class="link">停止</button></div>
+          <div class="bar"><div></div></div>
+        </div>
+      </section>
+      <div class="splitter v" data-resize="subs-right"></div>
+      <aside id="subs-right" class="panel side" data-panel="subs-right">
+        <div class="panel-head"><span>详情</span></div>
+        <div id="cue-detail" class="cue-detail muted">选择左侧的一条字幕查看判断和修改建议。</div>
+      </aside>
+    </main>
+
+    <!-- Edit requirements popover -->
+    <div id="rules-pop" class="popover" hidden>
+      <div class="pop-head">
+        <strong>剪辑要求</strong>
+        <button id="analyze" class="small primary" title="按精彩程度自动挑选">智能剪辑</button>
+      </div>
+      <div class="pop-row">
+        <select id="tpl-select" title="选择模板"></select>
+        <button id="tpl-apply" class="small">套用</button>
+        <button id="tpl-manage" class="small">管理…</button>
+        <button id="tpl-save" class="small" title="把当前的剪辑要求存成模板">存为模板</button>
+      </div>
+      <p id="tpl-current" class="muted note"></p>
+      <div id="rules" class="rules"></div>
+      <div class="options">
+        <label id="interest-opt">精彩程度 ≥ <b id="interest-v"></b><input id="interest" type="range" min="0.5" max="4" step="0.1" /></label>
+        <label>时长上限 <input id="target" type="number" min="0" step="10" placeholder="不限" /> 秒</label>
+        <label>片段前后多留
+          <select id="pad"><option value="0">0 秒</option><option value="1">1 秒</option><option value="2">2 秒</option><option value="4">4 秒</option></select>
+        </label>
+        <label class="check"><input id="fill" type="checkbox" /> 补齐片段间的小空隙</label>
+      </div>
+    </div>
+
     <div id="toast" class="toast" hidden></div>
 
-    <dialog id="settings">
-      <form method="dialog" class="settings-form">
-        <h3>设置</h3>
-        <fieldset>
-          <legend>Cloudflare 连接</legend>
-          <p id="conn-status" class="muted"></p>
-          <label>Account ID <input id="s-account" autocomplete="off" spellcheck="false" /></label>
-          <label>API Token <input id="s-token" type="password" autocomplete="off" spellcheck="false" /></label>
-          <label class="check"><input id="s-clear" type="checkbox" /> 清除已保存的凭证，改用已登录的 cf 命令行</label>
-          <p class="hint muted">需要 Workers AI 权限。不填时使用本机已登录的 <code>cf</code> 命令行（<code>cf auth login</code>）。凭证只保存在本机。</p>
-        </fieldset>
-        <fieldset>
-          <legend>分析与导出</legend>
-          <label>同时分析
-            <select id="s-concurrency">
-              <option value="2">2 段</option><option value="4">4 段</option><option value="6">6 段</option><option value="8">8 段</option>
-            </select>
-          </label>
-          <label>导出画质
-            <select id="s-quality">
-              <option value="high">高（文件大）</option>
-              <option value="medium">标准</option>
-              <option value="small">小（最高 720p，方便分享）</option>
-            </select>
-          </label>
-          <label>新视频默认套用模板
-            <select id="s-template"></select>
-          </label>
-          <p id="ffmpeg-status" class="hint"></p>
-        </fieldset>
-        <div class="actions end">
-          <button value="cancel">取消</button>
-          <button id="s-save" class="primary" value="save">保存</button>
-        </div>
-      </form>
+    <!-- Settings -->
+    <dialog id="settings" class="wide">
+      <div class="settings-layout">
+        <nav class="settings-nav">
+          <button data-tab="models" class="active">模型</button>
+          <button data-tab="general">通用</button>
+        </nav>
+        <section class="settings-body">
+          <div data-pane="models" id="models-pane"></div>
+          <div data-pane="general" hidden>
+            <h2>通用</h2>
+            <div class="form">
+              <label>同时分析
+                <select id="s-concurrency"><option value="2">2 段</option><option value="4">4 段</option><option value="6">6 段</option><option value="8">8 段</option></select>
+              </label>
+              <label>导出画质
+                <select id="s-quality"><option value="high">高（文件大）</option><option value="medium">标准</option><option value="small">小（最高 720p，方便分享）</option></select>
+              </label>
+              <label>新视频默认套用模板 <select id="s-template"></select></label>
+              <p id="ffmpeg-status" class="hint"></p>
+              <div class="actions"><button id="s-save" class="primary">保存</button></div>
+            </div>
+          </div>
+        </section>
+        <button id="settings-close" class="icon close-x" title="关闭"></button>
+      </div>
     </dialog>
 
+    <!-- Export -->
     <dialog id="export-dialog">
-      <form method="dialog" class="settings-form">
-        <h3>导出成片</h3>
-        <fieldset>
-          <legend>动效（Remotion）</legend>
-          <label>风格
-            <select id="fx-style">
-              <option value="none">不加动效（最快）</option>
-              <option value="esports">电竞：闪光转场、高能角标、推近震屏</option>
-              <option value="clean">简洁：柔和转场和角标</option>
-            </select>
-          </label>
-          <div id="fx-options" class="fx-grid">
-            <label>标题 <input id="fx-title" autocomplete="off" placeholder="默认用文件名" /></label>
-            <label>副标题 <input id="fx-subtitle" autocomplete="off" placeholder="可选，例如：2026 LCK 决赛" /></label>
-            <label>主色 <input id="fx-accent" type="color" /></label>
-            <label class="check"><input id="fx-intro" type="checkbox" /> 开场标题</label>
-            <label class="check"><input id="fx-transitions" type="checkbox" /> 节点转场</label>
-            <label class="check"><input id="fx-highlights" type="checkbox" /> 高能时刻</label>
-            <label class="check"><input id="fx-ending" type="checkbox" /> 结尾提示</label>
-            <label class="check"><input id="fx-outro" type="checkbox" /> 片尾卡片</label>
-            <label class="check"><input id="fx-progress" type="checkbox" /> 底部进度条</label>
-          </div>
-          <p class="hint muted">高能、转场的位置来自模板里标了“动效节点”的问题；没有模板时用精彩程度最高的片段。第一次加动效会自动安装渲染引擎（约 100 MB），之后每分钟成片大约需要 1 分钟渲染。</p>
-        </fieldset>
+      <form method="dialog" class="dialog-form">
+        <h2>导出成片</h2>
+        <label>动效（Remotion）
+          <select id="fx-style">
+            <option value="none">不加动效（最快）</option>
+            <option value="esports">电竞：闪光转场、高能角标、推近震屏</option>
+            <option value="clean">简洁：柔和转场和角标</option>
+          </select>
+        </label>
+        <div id="fx-options" class="fx-grid">
+          <label>标题 <input id="fx-title" autocomplete="off" placeholder="默认用文件名" /></label>
+          <label>副标题 <input id="fx-subtitle" autocomplete="off" placeholder="可选，例如：2026 LCK 决赛" /></label>
+          <label>主色 <input id="fx-accent" type="color" /></label>
+          <label class="check"><input id="fx-intro" type="checkbox" /> 开场标题</label>
+          <label class="check"><input id="fx-transitions" type="checkbox" /> 节点转场</label>
+          <label class="check"><input id="fx-highlights" type="checkbox" /> 高能时刻</label>
+          <label class="check"><input id="fx-ending" type="checkbox" /> 结尾提示</label>
+          <label class="check"><input id="fx-outro" type="checkbox" /> 片尾卡片</label>
+          <label class="check"><input id="fx-progress" type="checkbox" /> 底部进度条</label>
+        </div>
+        <p class="hint muted">高能、转场的位置来自模板里标了“动效节点”的问题；没有模板时用精彩程度最高的片段。第一次加动效会自动安装渲染引擎（需要几分钟），之后每分钟成片大约需要 1 分钟渲染。</p>
         <div class="actions end">
           <button value="cancel">取消</button>
           <button class="primary" value="export">选择位置并导出</button>
@@ -194,14 +218,26 @@
       </form>
     </dialog>
 
+    <!-- Export result -->
+    <dialog id="result-dialog">
+      <div class="dialog-form">
+        <h2>导出完成</h2>
+        <video id="out-video" controls preload="metadata"></video>
+        <p id="out-meta" class="muted"></p>
+        <div class="actions end">
+          <button id="reveal">在 Finder 中显示</button>
+          <button id="result-close" class="primary">完成</button>
+        </div>
+      </div>
+    </dialog>
+
+    <!-- Template manager -->
     <dialog id="tpl-dialog" class="wide">
       <div class="tpl-layout">
         <aside class="tpl-list">
-          <div class="row"><h3>模板</h3><button id="tpl-new" class="small">新建</button></div>
+          <div class="panel-head"><span>模板</span><button id="tpl-new" class="small">新建</button></div>
           <div id="tpl-items"></div>
-          <div class="actions wrap">
-            <button id="tpl-import" class="small">导入…</button>
-          </div>
+          <div class="actions"><button id="tpl-import" class="small">导入…</button></div>
         </aside>
         <section class="tpl-editor">
           <div id="tpl-form"></div>

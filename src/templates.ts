@@ -64,10 +64,6 @@ export async function refresh() {
   list = ((await attempt(() => Studio.templates())) ?? []).filter((t): t is Template => !!t);
   renderPicker();
   renderList();
-  const sel = $<HTMLSelectElement>("#s-template");
-  const current = sel.value;
-  sel.replaceChildren(el("option", { value: "", textContent: "不套用" }), ...list.map((t) => el("option", { value: t.id, textContent: t.name })));
-  sel.value = current;
 }
 
 export function renderPicker() {
@@ -117,7 +113,7 @@ async function saveFromProject() {
 
 // ---- manager ----
 
-function openManager(id?: string) {
+export function openManager(id?: string) {
   const d = $<HTMLDialogElement>("#tpl-dialog");
   const pick = list.find((t) => t.id === (id ?? $<HTMLSelectElement>("#tpl-select").value)) ?? list[0];
   if (pick) edit(pick);

@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/sha1"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -79,87 +78,6 @@ type RecentProject struct {
 	KeptSeconds float64   `json:"keptSeconds"`
 	Missing     bool      `json:"missing"`
 	UpdatedAt   time.Time `json:"updatedAt"`
-}
-
-// Settings are the app preferences as the page sees them. The API token
-// itself never leaves Go.
-type Settings struct {
-	AccountID   string        `json:"accountId"`
-	HasToken    bool          `json:"hasToken"`
-	Concurrency int           `json:"concurrency"`
-	Quality     media.Quality `json:"quality"`
-	// Connection says how Clef is reached, or why it cannot be.
-	Connection string `json:"connection"`
-	Connected  bool   `json:"connected"`
-	FFmpeg     string `json:"ffmpeg"`
-	// DefaultTemplate is applied to newly opened videos ("" for none).
-	DefaultTemplate string `json:"defaultTemplate"`
-}
-
-type storedSettings struct {
-	clef.Config
-	Concurrency     int           `json:"concurrency"`
-	Quality         media.Quality `json:"quality"`
-	DefaultTemplate string        `json:"defaultTemplate"`
-}
-
-// ---- settings ----
-
-func settingsPath() string { return filepath.Join(dataDir(), "settings.json") }
-
-func loadSettings() storedSettings {
-	s := storedSettings{Concurrency: 4, Quality: media.QualityMedium}
-	if data, err := os.ReadFile(settingsPath()); err == nil {
-		_ = json.Unmarshal(data, &s)
-	}
-	if s.Concurrency < 1 || s.Concurrency > 8 {
-		s.Concurrency = 4
-	}
-	if s.Quality == "" {
-		s.Quality = media.QualityMedium
-	}
-	return s
-}
-
-// GetSettings returns the preferences and checks that ffmpeg and Clef are
-// reachable.
-func (s *Studio) GetSettings() Settings {
-	st := loadSettings()
-	out := Settings{AccountID: st.AccountID, HasToken: st.APIToken != "", Concurrency: st.Concurrency, Quality: st.Quality, DefaultTemplate: st.DefaultTemplate}
-	if c, err := clef.New(st.Config); err != nil {
-		out.Connection = err.Error()
-	} else {
-		out.Connection, out.Connected = c.Name(), true
-	}
-	if _, err := media.LookTool("ffmpeg"); err != nil {
-		out.FFmpeg = err.Error()
-	}
-	return out
-}
-
-// SaveSettings stores the preferences. An empty apiToken keeps the saved
-// one; clear removes the saved credentials so the cf CLI is used.
-func (s *Studio) SaveSettings(accountID, apiToken string, clear bool, concurrency int, quality media.Quality, defaultTemplate string) Settings {
-	st := loadSettings()
-	st.AccountID = strings.TrimSpace(accountID)
-	if t := strings.TrimSpace(apiToken); t != "" {
-		st.APIToken = t
-	}
-	if clear {
-		st.Config = clef.Config{}
-	}
-	st.Concurrency, st.Quality, st.DefaultTemplate = concurrency, quality, defaultTemplate
-	if data, err := json.MarshalIndent(st, "", "  "); err == nil {
-		_ = os.MkdirAll(dataDir(), 0o700)
-		_ = os.WriteFile(settingsPath(), data, 0o600)
-	}
-	return s.GetSettings()
-}
-
-func newClient() (*clef.Client, int, error) {
-	st := loadSettings()
-	c, err := clef.New(st.Config)
-	return c, st.Concurrency, err
 }
 
 // ---- projects ----
@@ -427,8 +345,9 @@ func (s *Studio) analyze(ctx context.Context, p *editor.Project, events *mygo.Ch
 	return err
 }
 
-// Chat applies a chat message: Clef-flash works out what the user wants,
-// the edits change, and new content rules are analyzed.
+// Chat answers a chat message. With a chat model configured, the model
+// talks with the user and edits through tools; otherwise Clef-flash works
+// out which edit the message asks for.
 func (s *Studio) Chat(ctx context.Context, id, message string, events *mygo.Channel[Event]) (*ChatResult, error) {
 	message = strings.TrimSpace(message)
 	if message == "" {
@@ -442,7 +361,14 @@ func (s *Studio) Chat(ctx context.Context, id, message string, events *mygo.Chan
 		return nil, errors.New("正在处理上一个操作，请稍候")
 	}
 	defer e.mu.Unlock()
-	p := e.p
+	if loadSettings().Chat.Model != "" {
+		return s.agentChat(ctx, e.p, message, events)
+	}
+	return s.clefChat(ctx, e.p, message, events)
+}
+
+// clefChat handles a message with Clef-flash intent detection.
+func (s *Studio) clefChat(ctx context.Context, p *editor.Project, message string, events *mygo.Channel[Event]) (*ChatResult, error) {
 	client, _, err := newClient()
 	if err != nil {
 		return nil, err
@@ -768,11 +694,13 @@ func main() {
 	mygo.App.WhenReady(func() {
 		win := mygo.NewWindow(mygo.WindowOptions{
 			Title:           "闪剪",
-			Width:           1360,
-			Height:          880,
-			MinWidth:        960,
+			Width:           1440,
+			Height:          900,
+			MinWidth:        980,
 			MinHeight:       620,
-			BackgroundColor: "light-dark(#f6f7f9, #0e1014)", // the page's --bg in src/style.css
+			TitleBarStyle:   mygo.TitleBarHidden,
+			TitleBarHeight:  44,
+			BackgroundColor: "light-dark(#ececec, #1e1e1e)", // the page's --bg in src/style.css
 			StateKey:        "main",
 			URL:             "/",
 		})

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -98,6 +99,33 @@ func selfTest(win *mygo.Window, studio *Studio) {
 			log.Printf("selftest: capture: %v", err)
 		} else if err := os.WriteFile(shot, png, 0o644); err == nil {
 			log.Printf("selftest: wrote %s", shot)
+		}
+	}
+	if dir := os.Getenv("FLASHCUT_SELFTEST_SHOTS"); dir != "" {
+		capture := func(name string) {
+			time.Sleep(1500 * time.Millisecond)
+			if png, err := win.CapturePage(); err == nil {
+				_ = os.WriteFile(filepath.Join(dir, name), png, 0o644)
+				log.Printf("selftest: wrote %s", name)
+			}
+		}
+		capture("edit.png")
+		eval(`window.flashcut.openRules(); return ""`)
+		capture("rules.png")
+		eval(`window.flashcut.openRules(); window.flashcut.openSettings(); return ""`)
+		time.Sleep(3 * time.Second)
+		capture("settings.png")
+		eval(`document.querySelector("#settings").close(); return ""`)
+		if pair := strings.SplitN(os.Getenv("FLASHCUT_SELFTEST_SUBS"), "|", 2); len(pair) == 2 {
+			v, _ := json.Marshal(pair[0])
+			sub, _ := json.Marshal(pair[1])
+			eval(`window.flashcut.subs(` + string(v) + `, ` + string(sub) + `); return ""`)
+			time.Sleep(3 * time.Second)
+			if waitFor("subtitle check", `return !window.flashcut.subsBusy()`, 15*time.Minute) {
+				log.Printf("selftest subs: %s", eval(`return document.querySelector("#subs-summary").textContent`))
+				eval(`window.flashcut.selectIssue(); return ""`)
+				capture("subs.png")
+			}
 		}
 	}
 	if shot := os.Getenv("FLASHCUT_SELFTEST_MANAGER"); strings.HasSuffix(shot, ".png") {

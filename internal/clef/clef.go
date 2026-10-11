@@ -112,9 +112,11 @@ type Response struct {
 	} `json:"usage"`
 }
 
-// Config holds Cloudflare credentials. When AccountID and APIToken are
-// empty the signed-in `cf` CLI is used instead.
+// Config holds Cloudflare credentials.
 type Config struct {
+	// Mode is "auto" (the signed-in cf CLI if there is one, else the
+	// token), "cli" or "token".
+	Mode      string `json:"mode,omitempty"`
 	AccountID string `json:"accountId"`
 	APIToken  string `json:"apiToken"`
 }
@@ -129,15 +131,30 @@ type Client struct {
 // New returns a client for cfg, or an error saying how to sign in.
 func New(cfg Config) (*Client, error) {
 	c := &Client{cfg: cfg, http: &http.Client{Timeout: 3 * time.Minute}}
-	if cfg.AccountID != "" && cfg.APIToken != "" {
+	hasToken := cfg.AccountID != "" && cfg.APIToken != ""
+	switch cfg.Mode {
+	case "token":
+		if !hasToken {
+			return nil, errors.New("请在模型设置里填写 Cloudflare Account ID 和 API Token")
+		}
+		return c, nil
+	case "cli":
+		cf, err := LookCF()
+		if err != nil {
+			return nil, errors.New("本机没有找到 cf 命令行；安装后运行 cf auth login，或改用 API Token")
+		}
+		c.cf = cf
 		return c, nil
 	}
-	cf, err := LookCF()
-	if err != nil {
-		return nil, errors.New("还没有 Cloudflare 凭证：在设置里填入 Account ID 和 API Token，或者在终端运行 `cf auth login`")
+	// Auto: a signed-in CLI first, then the token.
+	if cf, err := LookCF(); err == nil {
+		c.cf = cf
+		return c, nil
 	}
-	c.cf = cf
-	return c, nil
+	if hasToken {
+		return c, nil
+	}
+	return nil, errors.New("还没有连接 Cloudflare：在模型设置里填入 Account ID 和 API Token，或者在终端运行 cf auth login")
 }
 
 // Name says how the client reaches Cloudflare.
@@ -312,4 +329,43 @@ func LookCF() (string, error) {
 		}
 	}
 	return "", errors.New("cf not found")
+}
+
+// CLIStatus describes the cf CLI on this device.
+type CLIStatus struct {
+	Found     bool   `json:"found"`
+	Path      string `json:"path"`
+	SignedIn  bool   `json:"signedIn"`
+	Account   string `json:"account"`
+	AccountID string `json:"accountId"`
+}
+
+// DetectCLI finds the cf CLI and checks that it is signed in.
+func DetectCLI(ctx context.Context) CLIStatus {
+	cf, err := LookCF()
+	if err != nil {
+		return CLIStatus{}
+	}
+	st := CLIStatus{Found: true, Path: cf}
+	cmd := exec.CommandContext(ctx, cf, "auth", "whoami")
+	cmd.Dir = os.TempDir()
+	cmd.Env = append(os.Environ(), "PATH="+filepath.Dir(cf)+":"+os.Getenv("PATH")+":/opt/homebrew/bin:/usr/local/bin")
+	out, err := cmd.Output()
+	if err != nil {
+		return st
+	}
+	var who struct {
+		Authenticated bool `json:"authenticated"`
+		Accounts      []struct {
+			ID   string `json:"id"`
+			Name string `json:"name"`
+		} `json:"accounts"`
+	}
+	if json.Unmarshal(out, &who) == nil && who.Authenticated {
+		st.SignedIn = true
+		if len(who.Accounts) > 0 {
+			st.Account, st.AccountID = who.Accounts[0].Name, who.Accounts[0].ID
+		}
+	}
+	return st
 }

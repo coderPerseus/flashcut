@@ -4,11 +4,34 @@ import { call, type Channel } from "mygo-runtime";
 
 // ---- Types ----
 
+export interface CLIStatus {
+  found: boolean;
+  path: string;
+  signedIn: boolean;
+  account: string;
+  accountId: string;
+}
+
 /** ChatResult is the outcome of one chat message. */
 export interface ChatResult {
   view: View | null;
   /** Export is true when the user asked to export; the page then runs it. */
   export: boolean;
+}
+
+/** CloudflareView is the Clef connection as the page sees it. */
+export interface CloudflareView {
+  mode: string;
+  accountId: string;
+  hasToken: boolean;
+  keyHint: string;
+  cli: CLIStatus;
+  /**
+   * Using says how calls are made now ("cf CLI" or "API Token"), or why
+   * they cannot be.
+   */
+  using: string;
+  connected: boolean;
 }
 
 export interface Edits {
@@ -52,6 +75,37 @@ export interface ExportResult {
   size: number;
 }
 
+export type Format = string;
+
+export interface Item {
+  index: number;
+  start: number;
+  end: number;
+  text: string;
+  status: Status;
+  match: number;
+  speech: number;
+  evidence?: string;
+  suggestion?: string;
+  reason?: string;
+  accepted: boolean;
+  error?: string;
+}
+
+export interface Job {
+  id: string;
+  video: VideoInfo;
+  subPath: string;
+  subData: string;
+  format: Format;
+  setting: Source;
+  source: Source;
+  threshold: number;
+  items: Item[];
+  tokens: number;
+  updatedAt: string;
+}
+
 export interface Message {
   role: string;
   text: string;
@@ -59,6 +113,21 @@ export interface Message {
 }
 
 export type Mode = string;
+
+/** ModelRef picks a model on a provider. */
+export interface ModelRef {
+  provider: string;
+  model: string;
+}
+
+/** ModelSettings is the model configuration page. */
+export interface ModelSettings {
+  cloudflare: CloudflareView;
+  providers: ProviderView[];
+  chat: ModelRef;
+  fixer: ModelRef;
+  vision: ModelRef;
+}
 
 export interface PresetQuestion {
   key: string;
@@ -90,6 +159,28 @@ export interface Project {
   effects?: EffectSettings;
   nextRuleId: number;
   updatedAt: string;
+}
+
+/** ProviderInput edits a provider. An empty APIKey keeps the saved key. */
+export interface ProviderInput {
+  id: string;
+  name: string;
+  protocol: string;
+  baseUrl: string;
+  apiKey: string;
+  models: string[];
+}
+
+/** ProviderView is a provider as the page sees it: the key is masked. */
+export interface ProviderView {
+  id: string;
+  name: string;
+  protocol: string;
+  baseUrl: string;
+  hasKey: boolean;
+  keyHint: string;
+  models: string[];
+  builtin: boolean;
 }
 
 export type Quality = string;
@@ -146,21 +237,33 @@ export interface Segment {
   reason: string;
 }
 
-/**
- * Settings are the app preferences as the page sees them. The API token
- * itself never leaves Go.
- */
+/** Settings are the general preferences. */
 export interface Settings {
-  accountId: string;
-  hasToken: boolean;
   concurrency: number;
   quality: Quality;
-  /** Connection says how Clef is reached, or why it cannot be. */
-  connection: string;
-  connected: boolean;
-  ffmpeg: string;
-  /** DefaultTemplate is applied to newly opened videos ("" for none). */
   defaultTemplate: string;
+  /** FFmpeg is empty when ffmpeg is installed, else what is wrong. */
+  ffmpeg: string;
+}
+
+export type Source = string;
+
+export type Status = string;
+
+/** SubJobView is a subtitle check as the page sees it. */
+export interface SubJobView {
+  job: Job | null;
+  mediaUrl: string;
+  counts: Record<string, number>;
+  costUsd: number;
+}
+
+/** SubProgress reports a checked cue. */
+export interface SubProgress {
+  done: number;
+  total: number;
+  item?: Item;
+  stage?: string;
 }
 
 export interface Summary {
@@ -192,6 +295,15 @@ export interface Template {
   effects?: EffectSettings;
   examples?: string[];
   updatedAt: string;
+}
+
+/** TestResult is the outcome of a connection test. */
+export interface TestResult {
+  ok: boolean;
+  reply: string;
+  error: string;
+  latencyMs: number;
+  model: string;
 }
 
 export interface VideoInfo {
@@ -233,11 +345,23 @@ export const Studio = {
     return call("Studio.ApplyTemplate", id, templateID, events);
   },
   /**
-   * Chat applies a chat message: Clef-flash works out what the user wants,
-   * the edits change, and new content rules are analyzed.
+   * Chat answers a chat message. With a chat model configured, the model
+   * talks with the user and edits through tools; otherwise Clef-flash works
+   * out which edit the message asks for.
    */
   chat(id: string, message: string, events: Channel<Event>): Promise<ChatResult | null> {
     return call("Studio.Chat", id, message, events);
+  },
+  /** ChatModelName says which model answers chat, for the chat header. */
+  chatModelName(): Promise<string> {
+    return call("Studio.ChatModelName");
+  },
+  /**
+   * DeleteProvider removes a model service; roles using it fall back to
+   * Cloudflare.
+   */
+  deleteProvider(id: string): Promise<ModelSettings> {
+    return call("Studio.DeleteProvider", id);
   },
   /** DeleteRange removes a time-range rule by position. */
   deleteRange(id: string, index: number): Promise<View | null> {
@@ -272,14 +396,25 @@ export const Studio = {
   exportTemplate(templateID: string): Promise<string> {
     return call("Studio.ExportTemplate", templateID);
   },
+  /**
+   * FetchModels lists the models a service offers, using the form's values
+   * (with the saved key when the form leaves it empty).
+   */
+  fetchModels(in_: ProviderInput): Promise<string[]> {
+    return call("Studio.FetchModels", in_);
+  },
   /** Forget removes a project from the recent list. The video is untouched. */
   forget(id: string): Promise<void> {
     return call("Studio.Forget", id);
   },
   /**
-   * GetSettings returns the preferences and checks that ffmpeg and Clef are
-   * reachable.
+   * GetModelSettings returns the model configuration. It checks whether the
+   * cf CLI is installed and signed in.
    */
+  getModelSettings(): Promise<ModelSettings> {
+    return call("Studio.GetModelSettings");
+  },
+  /** GetSettings returns the general preferences. */
   getSettings(): Promise<Settings> {
     return call("Studio.GetSettings");
   },
@@ -314,16 +449,24 @@ export const Studio = {
   reveal(path: string): Promise<void> {
     return call("Studio.Reveal", path);
   },
+  /**
+   * SaveCloudflare sets how Clef is reached: mode "auto", "cli" or "token".
+   * An empty token keeps the saved one; clear removes the saved token.
+   */
+  saveCloudflare(mode: string, accountID: string, token: string, clear: boolean): Promise<ModelSettings> {
+    return call("Studio.SaveCloudflare", mode, accountID, token, clear);
+  },
   /** SaveProjectAsTemplate turns a project's requests into a new template. */
   saveProjectAsTemplate(id: string, name: string): Promise<Template | null> {
     return call("Studio.SaveProjectAsTemplate", id, name);
   },
-  /**
-   * SaveSettings stores the preferences. An empty apiToken keeps the saved
-   * one; clear removes the saved credentials so the cf CLI is used.
-   */
-  saveSettings(accountID: string, apiToken: string, clear: boolean, concurrency: number, quality: Quality, defaultTemplate: string): Promise<Settings> {
-    return call("Studio.SaveSettings", accountID, apiToken, clear, concurrency, quality, defaultTemplate);
+  /** SaveProvider adds or updates a model service. */
+  saveProvider(in_: ProviderInput): Promise<ModelSettings> {
+    return call("Studio.SaveProvider", in_);
+  },
+  /** SaveSettings stores the general preferences. */
+  saveSettings(concurrency: number, quality: Quality, defaultTemplate: string): Promise<Settings> {
+    return call("Studio.SaveSettings", concurrency, quality, defaultTemplate);
   },
   /** SaveTemplate validates and stores t. Saving a built-in stores a copy. */
   saveTemplate(t: Template): Promise<Template | null> {
@@ -341,13 +484,66 @@ export const Studio = {
   setOverride(id: string, index: number, mode: string): Promise<View | null> {
     return call("Studio.SetOverride", id, index, mode);
   },
+  /** SetRoles chooses the models for chat, subtitle fixing and screen reading. */
+  setRoles(chat: ModelRef, fixer: ModelRef, vision: ModelRef): Promise<ModelSettings> {
+    return call("Studio.SetRoles", chat, fixer, vision);
+  },
   /** SetRule enables, disables or retunes a content rule. */
   setRule(id: string, ruleID: string, enabled: boolean, threshold: number): Promise<View | null> {
     return call("Studio.SetRule", id, ruleID, enabled, threshold);
   },
+  /**
+   * SubsCreate prepares a check of subtitle against video. source is "auto",
+   * "audio" or "burned". An earlier check of the same files is resumed.
+   */
+  subsCreate(video: string, subtitle: string, source: Source): Promise<SubJobView | null> {
+    return call("Studio.SubsCreate", video, subtitle, source);
+  },
+  /** SubsEdit sets whether a cue's suggestion is used, and optionally its text. */
+  subsEdit(id: string, index: number, accepted: boolean, text: string): Promise<SubJobView | null> {
+    return call("Studio.SubsEdit", id, index, accepted, text);
+  },
+  /**
+   * SubsExport writes the corrected subtitles where the user picks. It
+   * returns the path, or "" when canceled.
+   */
+  subsExport(id: string): Promise<string> {
+    return call("Studio.SubsExport", id);
+  },
+  /** SubsOpen opens a saved check. */
+  subsOpen(id: string): Promise<SubJobView | null> {
+    return call("Studio.SubsOpen", id);
+  },
+  /**
+   * SubsPick asks for a video ("video") or a subtitle file ("subtitle") and
+   * returns its path, or "" when canceled.
+   */
+  subsPick(kind: string): Promise<string> {
+    return call("Studio.SubsPick", kind);
+  },
+  /** SubsRecent lists earlier subtitle checks. */
+  subsRecent(): Promise<(SubJobView | null)[]> {
+    return call("Studio.SubsRecent");
+  },
+  /** SubsRecheck clears results so every cue is checked again. */
+  subsRecheck(id: string): Promise<SubJobView | null> {
+    return call("Studio.SubsRecheck", id);
+  },
+  /** SubsRun checks every unchecked cue, streaming results. */
+  subsRun(id: string, progress: Channel<SubProgress>): Promise<SubJobView | null> {
+    return call("Studio.SubsRun", id, progress);
+  },
   /** Templates lists the built-in and saved templates. */
   templates(): Promise<(Template | null)[]> {
     return call("Studio.Templates");
+  },
+  /** TestCloudflare asks Clef-flash a yes/no question to check the connection. */
+  testCloudflare(): Promise<TestResult> {
+    return call("Studio.TestCloudflare");
+  },
+  /** TestModel sends a short greeting to a model and returns its reply. */
+  testModel(in_: ProviderInput, model: string): Promise<TestResult> {
+    return call("Studio.TestModel", in_, model);
   },
   /** Undo reverts the last edit. */
   undo(id: string): Promise<View | null> {
