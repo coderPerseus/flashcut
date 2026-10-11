@@ -46,6 +46,12 @@ go run ./cmd/subcheck -o fixed.srt video.mp4 subtitles.srt
 
 推送 `v*` 标签会由 GitHub Actions 构建通用（Apple 芯片 + Intel）安装包并发布 Release。
 
+官网在 `site/`，以 Cloudflare Worker 静态资源部署到 cut.islumi.com：
+
+```bash
+cd site && npm install && npm run deploy   # 需要已登录的 cf 命令行
+```
+
 ### 目录
 
 | 路径 | 内容 |
