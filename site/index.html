@@ -14,15 +14,15 @@
     :root {
       color-scheme: light dark;
       --bg: #fbfbfd; --fg: #1d1d1f; --muted: #6e6e73; --card: #fff; --line: #e5e5ea;
-      --accent: #6b3cff; --accent-2: #ff3d7f; --code: #f2f2f7;
+      --link: #0066cc; --flash: #f59e0b; --code: #f2f2f7;
       font: 16px/1.6 -apple-system, BlinkMacSystemFont, "PingFang SC", "Helvetica Neue", sans-serif;
     }
     @media (prefers-color-scheme: dark) {
-      :root { --bg: #0b0b0f; --fg: #f2f2f5; --muted: #9a9aa3; --card: #16161c; --line: #2a2a33; --code: #1d1d25; }
+      :root { --bg: #0b0b0c; --fg: #f5f5f7; --muted: #9a9aa0; --card: #161618; --line: #2a2a2d; --code: #1c1c1f; --link: #4da3ff; --flash: #ffb020; }
     }
     * { box-sizing: border-box; }
     body { margin: 0; background: var(--bg); color: var(--fg); }
-    a { color: var(--accent); text-decoration: none; }
+    a { color: var(--link); text-decoration: none; }
     a:hover { text-decoration: underline; }
     .wrap { width: min(1080px, 100% - 32px); margin: 0 auto; }
     nav { position: sticky; top: 0; z-index: 10; backdrop-filter: saturate(180%) blur(16px); background: color-mix(in srgb, var(--bg) 78%, transparent); border-bottom: 1px solid var(--line); }
@@ -34,11 +34,11 @@
     .hero { text-align: center; padding: 72px 0 40px; }
     .hero img.logo { width: 132px; height: 132px; }
     h1 { font-size: clamp(34px, 6vw, 56px); line-height: 1.12; margin: 18px 0 12px; letter-spacing: -0.02em; }
-    .grad { background: linear-gradient(100deg, #3b5bff, var(--accent) 50%, var(--accent-2)); -webkit-background-clip: text; background-clip: text; color: transparent; }
+    .grad { color: var(--flash); }
     .lead { font-size: clamp(16px, 2.2vw, 20px); color: var(--muted); max-width: 680px; margin: 0 auto; }
     .cta { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; margin: 28px 0 10px; }
     .btn { display: inline-flex; align-items: center; gap: 8px; padding: 12px 22px; border-radius: 999px; font-weight: 600; font-size: 16px; border: 1px solid var(--line); color: var(--fg); background: var(--card); }
-    .btn.primary { background: linear-gradient(100deg, #3b5bff, var(--accent) 55%, var(--accent-2)); color: #fff; border: 0; box-shadow: 0 8px 24px color-mix(in srgb, var(--accent) 35%, transparent); }
+    .btn.primary { background: var(--fg); color: var(--bg); border: 0; }
     .btn:hover { text-decoration: none; filter: brightness(1.05); }
     .small { font-size: 13px; color: var(--muted); }
     .shot { margin: 36px auto 0; border-radius: 14px; overflow: hidden; border: 1px solid var(--line); box-shadow: 0 30px 80px rgb(0 0 0 / 0.18); }
@@ -56,7 +56,7 @@
     .two img { width: 100%; border-radius: 12px; border: 1px solid var(--line); }
     ol.steps { counter-reset: s; list-style: none; padding: 0; margin: 0; display: grid; gap: 14px; }
     ol.steps > li { counter-increment: s; position: relative; padding: 16px 18px 16px 62px; background: var(--card); border: 1px solid var(--line); border-radius: 14px; }
-    ol.steps > li::before { content: counter(s); position: absolute; left: 18px; top: 16px; width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; font-weight: 700; color: #fff; background: linear-gradient(135deg, #3b5bff, var(--accent-2)); }
+    ol.steps > li::before { content: counter(s); position: absolute; left: 18px; top: 16px; width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; font-weight: 700; background: var(--fg); color: var(--bg); }
     ol.steps h3 { margin: 0 0 4px; font-size: 17px; }
     ol.steps p { margin: 4px 0; color: var(--muted); }
     pre { background: var(--code); border-radius: 10px; padding: 12px 14px; overflow-x: auto; margin: 8px 0; font-size: 14px; }
@@ -64,7 +64,7 @@
     p code, li code { background: var(--code); padding: 1px 6px; border-radius: 5px; }
     .chat { display: grid; gap: 8px; max-width: 420px; }
     .bubble { padding: 9px 14px; border-radius: 16px; font-size: 15px; width: fit-content; max-width: 100%; }
-    .bubble.me { justify-self: end; background: var(--accent); color: #fff; border-bottom-right-radius: 4px; }
+    .bubble.me { justify-self: end; background: var(--fg); color: var(--bg); border-bottom-right-radius: 4px; }
     .bubble.ai { background: var(--card); border: 1px solid var(--line); border-bottom-left-radius: 4px; }
     details { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 14px 18px; margin-bottom: 10px; }
     summary { cursor: pointer; font-weight: 600; }

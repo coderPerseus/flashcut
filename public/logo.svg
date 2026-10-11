@@ -1,26 +1,28 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
   <defs>
-    <linearGradient id="bg" x1="0.1" y1="0" x2="0.9" y2="1">
-      <stop offset="0" stop-color="#3B5BFF"/>
-      <stop offset="0.55" stop-color="#8A3CFF"/>
-      <stop offset="1" stop-color="#FF3D7F"/>
+    <!-- Near-black tile with a faint top light, like a camera body. -->
+    <linearGradient id="tile" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#232326"/>
+      <stop offset="1" stop-color="#1a1a1c"/>
     </linearGradient>
-    <radialGradient id="glow" cx="0.3" cy="0.2" r="0.8">
-      <stop offset="0" stop-color="#fff" stop-opacity="0.35"/>
-      <stop offset="0.6" stop-color="#fff" stop-opacity="0"/>
-    </radialGradient>
+    <linearGradient id="rim" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.16"/>
+      <stop offset="0.35" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
     <mask id="cut">
       <rect width="1024" height="1024" fill="#fff"/>
-      <!-- the "flash cut": a lightning-shaped gap through the play mark -->
-      <polyline points="660,180 520,500 610,500 452,860" fill="none" stroke="#000" stroke-width="46" stroke-linejoin="miter" stroke-miterlimit="10"/>
+      <polyline points="672,170 524,500 616,500 448,870" fill="none" stroke="#000" stroke-width="64" stroke-linejoin="miter" stroke-miterlimit="10"/>
     </mask>
     <filter id="shadow" x="-10%" y="-10%" width="120%" height="125%">
-      <feDropShadow dx="0" dy="16" stdDeviation="20" flood-color="#1a0b3d" flood-opacity="0.35"/>
+      <feDropShadow dx="0" dy="14" stdDeviation="18" flood-color="#000" flood-opacity="0.3"/>
     </filter>
   </defs>
-  <rect x="100" y="100" width="824" height="824" rx="190" fill="url(#bg)" filter="url(#shadow)"/>
-  <rect x="100" y="100" width="824" height="824" rx="190" fill="url(#glow)"/>
+  <rect x="100" y="100" width="824" height="824" rx="190" fill="url(#tile)" filter="url(#shadow)"/>
+  <rect x="101.5" y="101.5" width="821" height="821" rx="188.5" fill="none" stroke="url(#rim)" stroke-width="3"/>
+  <!-- The play mark, split by the cut. -->
   <g mask="url(#cut)">
-    <path d="M380 292 Q356 280 356 308 L356 716 Q356 744 380 732 L748 530 Q772 512 748 494 Z" fill="#fff"/>
+    <path d="M380 292 Q356 280 356 308 L356 716 Q356 744 380 732 L748 530 Q772 512 748 494 Z" fill="#f5f5f7"/>
   </g>
+  <!-- The flash inside the cut. -->
+  <polyline points="626,272 524,500 616,500 506,742" fill="none" stroke="#ffb020" stroke-width="24" stroke-linejoin="miter" stroke-miterlimit="10" stroke-linecap="round"/>
 </svg>
