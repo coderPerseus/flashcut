@@ -20,6 +20,7 @@ import (
 	"flashcut/internal/clef"
 	"flashcut/internal/editor"
 	"flashcut/internal/media"
+	"flashcut/internal/preset"
 )
 
 // Studio is the FlashCut backend: it opens videos as projects, analyzes
@@ -90,12 +91,15 @@ type Settings struct {
 	Connection string `json:"connection"`
 	Connected  bool   `json:"connected"`
 	FFmpeg     string `json:"ffmpeg"`
+	// DefaultTemplate is applied to newly opened videos ("" for none).
+	DefaultTemplate string `json:"defaultTemplate"`
 }
 
 type storedSettings struct {
 	clef.Config
-	Concurrency int           `json:"concurrency"`
-	Quality     media.Quality `json:"quality"`
+	Concurrency     int           `json:"concurrency"`
+	Quality         media.Quality `json:"quality"`
+	DefaultTemplate string        `json:"defaultTemplate"`
 }
 
 // ---- settings ----
@@ -120,7 +124,7 @@ func loadSettings() storedSettings {
 // reachable.
 func (s *Studio) GetSettings() Settings {
 	st := loadSettings()
-	out := Settings{AccountID: st.AccountID, HasToken: st.APIToken != "", Concurrency: st.Concurrency, Quality: st.Quality}
+	out := Settings{AccountID: st.AccountID, HasToken: st.APIToken != "", Concurrency: st.Concurrency, Quality: st.Quality, DefaultTemplate: st.DefaultTemplate}
 	if c, err := clef.New(st.Config); err != nil {
 		out.Connection = err.Error()
 	} else {
@@ -134,7 +138,7 @@ func (s *Studio) GetSettings() Settings {
 
 // SaveSettings stores the preferences. An empty apiToken keeps the saved
 // one; clear removes the saved credentials so the cf CLI is used.
-func (s *Studio) SaveSettings(accountID, apiToken string, clear bool, concurrency int, quality media.Quality) Settings {
+func (s *Studio) SaveSettings(accountID, apiToken string, clear bool, concurrency int, quality media.Quality, defaultTemplate string) Settings {
 	st := loadSettings()
 	st.AccountID = strings.TrimSpace(accountID)
 	if t := strings.TrimSpace(apiToken); t != "" {
@@ -143,7 +147,7 @@ func (s *Studio) SaveSettings(accountID, apiToken string, clear bool, concurrenc
 	if clear {
 		st.Config = clef.Config{}
 	}
-	st.Concurrency, st.Quality = concurrency, quality
+	st.Concurrency, st.Quality, st.DefaultTemplate = concurrency, quality, defaultTemplate
 	if data, err := json.MarshalIndent(st, "", "  "); err == nil {
 		_ = os.MkdirAll(dataDir(), 0o700)
 		_ = os.WriteFile(settingsPath(), data, 0o600)
@@ -204,6 +208,13 @@ func (s *Studio) OpenPath(ctx context.Context, path string) (*View, error) {
 	p := editor.New(id, info, editor.DefaultSegmentSeconds)
 	p.AddMessage("assistant", fmt.Sprintf("已打开「%s」（%s）。告诉我想怎么剪，比如“只保留精彩片段”“去掉片头广告”“控制在 3 分钟”，或者直接点「智能剪辑」让我挑出最值得看的部分。",
 		filepath.Base(path), media.Clock(info.Duration)))
+	if id := loadSettings().DefaultTemplate; id != "" {
+		if t, err := templates().Get(id); err == nil {
+			preset.Apply(p, t)
+			p.History = nil
+			p.AddMessage("assistant", fmt.Sprintf("已套用默认模板「%s」，点「智能剪辑」开始分析。", t.Name))
+		}
+	}
 	p.Select()
 	if err := p.Save(projectsDir()); err != nil {
 		return nil, err
@@ -311,7 +322,11 @@ func (s *Studio) SetRule(id, ruleID string, enabled bool, threshold float64) (*V
 		}
 		p.Checkpoint()
 		r = p.Rule(ruleID)
-		r.Enabled, r.Threshold = enabled, min(max(threshold, 0.05), 0.99)
+		hi := 0.99
+		if r.Question != nil && r.Question.Type == "score" {
+			hi = float64(max(r.Question.Levels()-1, 1))
+		}
+		r.Enabled, r.Threshold = enabled, min(max(threshold, 0), hi)
 		return nil
 	})
 }
@@ -482,6 +497,110 @@ func ruleHits(p *editor.Project) string {
 		return ""
 	}
 	return fmt.Sprintf("“%s”命中 %d 段。", r.Text, n)
+}
+
+// ---- templates ----
+
+func templates() preset.Store { return preset.Store{Dir: filepath.Join(dataDir(), "templates")} }
+
+// Templates lists the built-in and saved templates.
+func (s *Studio) Templates() []*preset.Template { return templates().List() }
+
+// SaveTemplate validates and stores t. Saving a built-in stores a copy.
+func (s *Studio) SaveTemplate(t preset.Template) (*preset.Template, error) {
+	return templates().Save(&t)
+}
+
+// DeleteTemplate removes a saved template.
+func (s *Studio) DeleteTemplate(id string) error { return templates().Delete(id) }
+
+// ApplyTemplate sets a project's template rules and settings, then
+// analyzes what the new questions need. Earlier answers are reused.
+func (s *Studio) ApplyTemplate(ctx context.Context, id, templateID string, events *mygo.Channel[Event]) (*View, error) {
+	t, err := templates().Get(templateID)
+	if err != nil {
+		return nil, err
+	}
+	e, err := s.entry(id)
+	if err != nil {
+		return nil, err
+	}
+	if !e.mu.TryLock() {
+		return nil, errors.New("正在处理上一个操作，请稍候")
+	}
+	defer e.mu.Unlock()
+	preset.Apply(e.p, t)
+	sum := e.p.Summarize()
+	e.p.AddMessage("assistant", fmt.Sprintf("已套用模板「%s」（%d 个问题）。", t.Name, len(t.Questions)))
+	send(events, Event{Kind: "status", Text: fmt.Sprintf("套用模板「%s」，逐段分析（约 %d 段，预计 $%.2f）…", t.Name, len(e.p.Pending()), float64(sum.PendingTokens)/1e6*clef.PricePerMTok[clef.Omni])})
+	if err := s.analyze(ctx, e.p, events); err != nil {
+		return s.view(e.p), err
+	}
+	sum = e.p.Summarize()
+	e.p.AddMessage("assistant", fmt.Sprintf("分析完成：成片 %s，共 %d 个片段。", media.Clock(sum.KeptSeconds), sum.Clips))
+	_ = e.p.Save(projectsDir())
+	return s.view(e.p), nil
+}
+
+// SaveProjectAsTemplate turns a project's requests into a new template.
+func (s *Studio) SaveProjectAsTemplate(id, name string) (*preset.Template, error) {
+	e, err := s.entry(id)
+	if err != nil {
+		return nil, err
+	}
+	e.mu.Lock()
+	t := preset.FromProject(e.p, strings.TrimSpace(name))
+	e.mu.Unlock()
+	if len(t.Questions) == 0 {
+		return nil, errors.New("这个项目还没有剪辑要求，先在聊天里说几句再存成模板")
+	}
+	return templates().Save(t)
+}
+
+// ImportTemplate reads a template file the user picks.
+func (s *Studio) ImportTemplate(ctx context.Context) (*preset.Template, error) {
+	paths, err := mygo.Dialog.Open(mygo.OpenDialogOptions{
+		Parent:  mygo.CallerWindow(ctx),
+		Title:   "导入模板",
+		Filters: []mygo.FileFilter{{Name: "闪剪模板", Extensions: []string{"json"}}},
+	})
+	if err != nil || len(paths) == 0 {
+		return nil, err
+	}
+	data, err := os.ReadFile(paths[0])
+	if err != nil {
+		return nil, err
+	}
+	t, err := preset.Parse(data)
+	if err != nil {
+		return nil, err
+	}
+	t.ID = "" // always a new saved copy
+	return templates().Save(t)
+}
+
+// ExportTemplate writes a template to a file the user picks. It returns
+// the path, or "" when canceled.
+func (s *Studio) ExportTemplate(ctx context.Context, templateID string) (string, error) {
+	t, err := templates().Get(templateID)
+	if err != nil {
+		return "", err
+	}
+	home, _ := os.UserHomeDir()
+	out, err := mygo.Dialog.Save(mygo.SaveDialogOptions{
+		Parent:      mygo.CallerWindow(ctx),
+		Title:       "导出模板",
+		DefaultPath: filepath.Join(home, "Downloads", t.Name+".flashcut.json"),
+		Filters:     []mygo.FileFilter{{Name: "闪剪模板", Extensions: []string{"json"}}},
+	})
+	if err != nil || out == "" {
+		return "", err
+	}
+	data, err := preset.Export(t)
+	if err != nil {
+		return "", err
+	}
+	return out, os.WriteFile(out, data, 0o644)
 }
 
 // ---- export ----

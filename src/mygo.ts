@@ -47,6 +47,21 @@ export interface Message {
 
 export type Mode = string;
 
+export interface PresetQuestion {
+  key: string;
+  label: string;
+  type: string;
+  instructions: string;
+  yes?: string;
+  no?: string;
+  options?: Record<string, string>;
+  levels?: string[];
+  use: Mode;
+  threshold: number;
+  match?: string[];
+  marker?: string;
+}
+
 export interface Project {
   id: string;
   version: number;
@@ -57,11 +72,19 @@ export interface Project {
   chat: Message[];
   history: Edits[];
   tokens: number;
+  templateId?: string;
+  templateName?: string;
   nextRuleId: number;
   updatedAt: string;
 }
 
 export type Quality = string;
+
+export interface Question {
+  type: string;
+  instructions: unknown;
+  criteria?: unknown;
+}
 
 export interface Range {
   start: number;
@@ -92,6 +115,10 @@ export interface Rule {
   threshold: number;
   enabled: boolean;
   createdAt: string;
+  source?: string;
+  question?: Question;
+  match?: string[];
+  marker?: string;
 }
 
 export interface Segment {
@@ -99,6 +126,7 @@ export interface Segment {
   start: number;
   end: number;
   answers: Record<string, number>;
+  choices?: Record<string, Record<string, number>>;
   error?: string;
   kept: boolean;
   reason: string;
@@ -117,6 +145,8 @@ export interface Settings {
   connection: string;
   connected: boolean;
   ffmpeg: string;
+  /** DefaultTemplate is applied to newly opened videos ("" for none). */
+  defaultTemplate: string;
 }
 
 export interface Summary {
@@ -129,6 +159,24 @@ export interface Summary {
   tokens: number;
   costUsd: number;
   pendingTokens: number;
+}
+
+export interface Template {
+  version: number;
+  id: string;
+  name: string;
+  description: string;
+  category: string;
+  builtin: boolean;
+  questions: PresetQuestion[];
+  segmentSeconds: number;
+  targetSeconds: number;
+  padSeconds: number;
+  fillGaps: boolean;
+  interestThreshold: number;
+  quality?: Quality;
+  examples?: string[];
+  updatedAt: string;
 }
 
 export interface VideoInfo {
@@ -163,6 +211,13 @@ export const Studio = {
     return call("Studio.Analyze", id, events);
   },
   /**
+   * ApplyTemplate sets a project's template rules and settings, then
+   * analyzes what the new questions need. Earlier answers are reused.
+   */
+  applyTemplate(id: string, templateID: string, events: Channel<Event>): Promise<View | null> {
+    return call("Studio.ApplyTemplate", id, templateID, events);
+  },
+  /**
    * Chat applies a chat message: Clef-flash works out what the user wants,
    * the edits change, and new content rules are analyzed.
    */
@@ -177,9 +232,20 @@ export const Studio = {
   deleteRule(id: string, ruleID: string): Promise<View | null> {
     return call("Studio.DeleteRule", id, ruleID);
   },
+  /** DeleteTemplate removes a saved template. */
+  deleteTemplate(id: string): Promise<void> {
+    return call("Studio.DeleteTemplate", id);
+  },
   /** Export asks where to save, then cuts and joins the selection. */
   export(id: string, events: Channel<Event>): Promise<ExportResult | null> {
     return call("Studio.Export", id, events);
+  },
+  /**
+   * ExportTemplate writes a template to a file the user picks. It returns
+   * the path, or "" when canceled.
+   */
+  exportTemplate(templateID: string): Promise<string> {
+    return call("Studio.ExportTemplate", templateID);
   },
   /** Forget removes a project from the recent list. The video is untouched. */
   forget(id: string): Promise<void> {
@@ -191,6 +257,10 @@ export const Studio = {
    */
   getSettings(): Promise<Settings> {
     return call("Studio.GetSettings");
+  },
+  /** ImportTemplate reads a template file the user picks. */
+  importTemplate(): Promise<Template | null> {
+    return call("Studio.ImportTemplate");
   },
   /**
    * Initial opens the video named by FLASHCUT_OPEN, if set, so the app can be
@@ -219,12 +289,20 @@ export const Studio = {
   reveal(path: string): Promise<void> {
     return call("Studio.Reveal", path);
   },
+  /** SaveProjectAsTemplate turns a project's requests into a new template. */
+  saveProjectAsTemplate(id: string, name: string): Promise<Template | null> {
+    return call("Studio.SaveProjectAsTemplate", id, name);
+  },
   /**
    * SaveSettings stores the preferences. An empty apiToken keeps the saved
    * one; clear removes the saved credentials so the cf CLI is used.
    */
-  saveSettings(accountID: string, apiToken: string, clear: boolean, concurrency: number, quality: Quality): Promise<Settings> {
-    return call("Studio.SaveSettings", accountID, apiToken, clear, concurrency, quality);
+  saveSettings(accountID: string, apiToken: string, clear: boolean, concurrency: number, quality: Quality, defaultTemplate: string): Promise<Settings> {
+    return call("Studio.SaveSettings", accountID, apiToken, clear, concurrency, quality, defaultTemplate);
+  },
+  /** SaveTemplate validates and stores t. Saving a built-in stores a copy. */
+  saveTemplate(t: Template): Promise<Template | null> {
+    return call("Studio.SaveTemplate", t);
   },
   /**
    * SetOptions changes the automatic selection: the interest level used when
@@ -241,6 +319,10 @@ export const Studio = {
   /** SetRule enables, disables or retunes a content rule. */
   setRule(id: string, ruleID: string, enabled: boolean, threshold: number): Promise<View | null> {
     return call("Studio.SetRule", id, ruleID, enabled, threshold);
+  },
+  /** Templates lists the built-in and saved templates. */
+  templates(): Promise<(Template | null)[]> {
+    return call("Studio.Templates");
   },
   /** Undo reverts the last edit. */
   undo(id: string): Promise<View | null> {

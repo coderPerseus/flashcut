@@ -66,7 +66,17 @@
         </div>
 
         <div class="card">
-          <div class="row"><h3>剪辑要求</h3><button id="analyze" class="small">智能剪辑</button></div>
+          <div class="row">
+            <h3>剪辑要求</h3>
+            <div class="actions wrap">
+              <select id="tpl-select" title="选择模板"></select>
+              <button id="tpl-apply" class="small">套用模板</button>
+              <button id="tpl-manage" class="small">管理模板</button>
+              <button id="tpl-save" class="small" title="把当前的剪辑要求存成模板">存为模板</button>
+              <button id="analyze" class="small primary">智能剪辑</button>
+            </div>
+          </div>
+          <p id="tpl-current" class="muted note"></p>
           <div id="rules" class="rules"></div>
           <div class="options">
             <label id="interest-opt">
@@ -140,6 +150,9 @@
               <option value="small">小（最高 720p，方便分享）</option>
             </select>
           </label>
+          <label>新视频默认套用模板
+            <select id="s-template"></select>
+          </label>
           <p id="ffmpeg-status" class="hint"></p>
         </fieldset>
         <div class="actions end">
@@ -147,6 +160,29 @@
           <button id="s-save" class="primary" value="save">保存</button>
         </div>
       </form>
+    </dialog>
+
+    <dialog id="tpl-dialog" class="wide">
+      <div class="tpl-layout">
+        <aside class="tpl-list">
+          <div class="row"><h3>模板</h3><button id="tpl-new" class="small">新建</button></div>
+          <div id="tpl-items"></div>
+          <div class="actions wrap">
+            <button id="tpl-import" class="small">导入…</button>
+          </div>
+        </aside>
+        <section class="tpl-editor">
+          <div id="tpl-form"></div>
+          <div class="actions end tpl-footer">
+            <span id="tpl-error" class="error-text"></span>
+            <button id="tpl-export" class="small">导出…</button>
+            <button id="tpl-duplicate" class="small">复制</button>
+            <button id="tpl-delete" class="small danger">删除</button>
+            <button id="tpl-close">关闭</button>
+            <button id="tpl-save-btn" class="primary">保存</button>
+          </div>
+        </section>
+      </div>
     </dialog>
 
     <script type="module" src="./src/main.ts"></script>

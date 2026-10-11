@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 )
@@ -43,6 +44,39 @@ func Noul(instructions string, yes, no string) Question {
 		q.Criteria = map[string]string{"true": yes, "false": no}
 	}
 	return q
+}
+
+// Choice picks one of options (id → description).
+func Choice(instructions string, options map[string]string) Question {
+	return Question{Type: "choice", Instructions: instructions, Criteria: options}
+}
+
+// Levels is the number of levels of a score question.
+func (q Question) Levels() int {
+	switch c := q.Criteria.(type) {
+	case []string:
+		return len(c)
+	case []any:
+		return len(c)
+	}
+	return 0
+}
+
+// Options lists the option ids of a choice question.
+func (q Question) Options() []string {
+	var out []string
+	switch c := q.Criteria.(type) {
+	case map[string]string:
+		for k := range c {
+			out = append(out, k)
+		}
+	case map[string]any:
+		for k := range c {
+			out = append(out, k)
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 // Score rates on ordered levels, lowest first.

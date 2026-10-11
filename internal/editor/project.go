@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"flashcut/internal/clef"
 	"flashcut/internal/media"
 )
 
@@ -27,22 +28,69 @@ const FormatVersion = 1
 // is, 0 (skip) to 4 (must see).
 const InterestID = "interest"
 
-// Mode says whether a rule keeps or removes what it matches.
+// Mode says what a rule does with the segments it matches.
 type Mode string
 
 const (
+	// ModeKeep keeps matching segments; with any keep rule, only matches are kept.
 	ModeKeep Mode = "keep"
+	// ModeDrop removes matching segments, overriding keep rules.
 	ModeDrop Mode = "drop"
+	// ModeBoost ranks matching segments higher when a length cap applies.
+	ModeBoost Mode = "boost"
+	// ModeMarker only marks moments (for effects); it does not change the cut.
+	ModeMarker Mode = "marker"
+	// ModeOpening and ModeEnding keep the first and last run of matching
+	// segments: the start and the end of the event in the video.
+	ModeOpening Mode = "opening"
+	ModeEnding  Mode = "ending"
 )
 
-// Rule is a content request in the user's words, asked of every segment.
+// Rule is a question asked of every segment and what to do with the answer.
+// Chat rules are a yes/no question built from the user's words; template
+// rules carry their own typed question.
 type Rule struct {
-	ID        string    `json:"id"`
+	ID string `json:"id"`
+	// Text is the user's words, or the question's label for templates.
 	Text      string    `json:"text"`
 	Mode      Mode      `json:"mode"`
 	Threshold float64   `json:"threshold"`
 	Enabled   bool      `json:"enabled"`
 	CreatedAt time.Time `json:"createdAt"`
+	// Source is "chat" or "template".
+	Source string `json:"source,omitempty"`
+	// Question replaces the question built from Text.
+	Question *clef.Question `json:"question,omitempty"`
+	// Match lists the options of a choice question that count as a match.
+	Match []string `json:"match,omitempty"`
+	// Marker names the effect a match triggers, such as "highlight".
+	Marker string `json:"marker,omitempty"`
+}
+
+// Value returns how strongly s matches r: v is compared with the
+// threshold (a probability, or a level for score questions) and norm is v
+// scaled to 0–1 for ranking.
+func (s *Segment) Value(r Rule) (v, norm float64, ok bool) {
+	if r.Question != nil && r.Question.Type == "choice" {
+		probs, ok := s.Choices[r.ID]
+		if !ok {
+			return 0, 0, false
+		}
+		for _, m := range r.Match {
+			v += probs[m]
+		}
+		return v, v, true
+	}
+	v, ok = s.Answers[r.ID]
+	if !ok {
+		return 0, 0, false
+	}
+	if r.Question != nil && r.Question.Type == "score" {
+		if levels := r.Question.Levels(); levels > 1 {
+			return v, v / float64(levels-1), true
+		}
+	}
+	return v, v, true
 }
 
 // RangeRule keeps or removes an exact span of the source.
@@ -60,7 +108,9 @@ type Segment struct {
 	// Answers maps a question id (InterestID or a rule id) to the model's
 	// answer: a probability for rules, a level 0–4 for interest.
 	Answers map[string]float64 `json:"answers"`
-	Error   string             `json:"error,omitempty"`
+	// Choices holds the option probabilities of choice questions.
+	Choices map[string]map[string]float64 `json:"choices,omitempty"`
+	Error   string                        `json:"error,omitempty"`
 	// Kept and Reason are set by Select.
 	Kept   bool   `json:"kept"`
 	Reason string `json:"reason"`
@@ -103,6 +153,9 @@ type Project struct {
 	Chat           []Message       `json:"chat"`
 	History        []Edits         `json:"history"`
 	Tokens         int             `json:"tokens"`
+	// TemplateID and TemplateName name the applied template, if any.
+	TemplateID   string `json:"templateId,omitempty"`
+	TemplateName string `json:"templateName,omitempty"`
 	// NextRuleID numbers rules; ids are never reused, so answers cached for
 	// a deleted rule cannot be mistaken for a new one.
 	NextRuleID int       `json:"nextRuleId"`
@@ -228,15 +281,18 @@ func (p *Project) AddRule(text string, mode Mode) Rule {
 // Select decides which segments to keep.
 func (p *Project) Select() {
 	e := p.Edits
-	var keepRules, dropRules []Rule
+	var keepRules, dropRules, boostRules []Rule
 	for _, r := range e.Rules {
 		if !r.Enabled {
 			continue
 		}
-		if r.Mode == ModeDrop {
+		switch r.Mode {
+		case ModeDrop:
 			dropRules = append(dropRules, r)
-		} else {
+		case ModeKeep:
 			keepRules = append(keepRules, r)
+		case ModeBoost:
+			boostRules = append(boostRules, r)
 		}
 	}
 	type cand struct {
@@ -273,8 +329,24 @@ func (p *Project) Select() {
 				s.Reason = fmt.Sprintf("精彩分 %.1f，偏低", interest)
 			}
 		}
+		for _, r := range boostRules {
+			if v, norm, ok := s.Value(r); ok && v >= r.Threshold {
+				priority += norm / 2
+				if s.Kept {
+					s.Reason += "，加分：" + r.Text
+				}
+			}
+		}
 		// Ties are broken by interest so the budget prefers lively segments.
 		cands = append(cands, cand{i, priority + interest/1000})
+	}
+	protected := map[int]bool{}
+	for _, r := range e.Rules {
+		if r.Enabled && (r.Mode == ModeOpening || r.Mode == ModeEnding) {
+			for _, i := range p.keepRun(r, r.Mode == ModeEnding) {
+				protected[i] = true
+			}
+		}
 	}
 
 	if e.TargetSeconds > 0 {
@@ -341,7 +413,7 @@ func (p *Project) Select() {
 			// gap fillers (no priority) go first.
 			victim, low := -1, math.Inf(1)
 			for i, s := range p.Segments {
-				if _, pinned := e.Overrides[i]; !s.Kept || pinned {
+				if _, pinned := e.Overrides[i]; !s.Kept || pinned || protected[i] {
 					continue
 				}
 				pr, ok := prio[i]
@@ -369,21 +441,52 @@ func (p *Project) keptSeconds() float64 {
 	return total
 }
 
+// best returns the rule s matches most strongly, its 0–1 strength, and
+// whether any rule reached its threshold.
 func best(s *Segment, rules []Rule) (Rule, float64, bool) {
 	var top Rule
 	topP, hit := -1.0, false
 	for _, r := range rules {
-		prob, ok := s.Answers[r.ID]
+		v, norm, ok := s.Value(r)
 		if !ok {
 			continue
 		}
-		if prob >= r.Threshold && (!hit || prob > topP) {
-			top, topP, hit = r, prob, true
-		} else if !hit && prob > topP {
-			top, topP = r, prob
+		if v >= r.Threshold && (!hit || norm > topP) {
+			top, topP, hit = r, norm, true
+		} else if !hit && norm > topP {
+			top, topP = r, norm
 		}
 	}
 	return top, math.Max(topP, 0), hit
+}
+
+// keepRun keeps the first run of consecutive segments matching r (the last
+// run when fromEnd), so a stray match mid-video is not taken for the start
+// or the end. Segments removed by drop rules stay removed.
+func (p *Project) keepRun(r Rule, fromEnd bool) []int {
+	n := len(p.Segments)
+	found := false
+	var kept []int
+	for k := range n {
+		i := k
+		if fromEnd {
+			i = n - 1 - k
+		}
+		s := &p.Segments[i]
+		v, _, ok := s.Value(r)
+		if ok && v >= r.Threshold {
+			found = true
+			if !strings.HasPrefix(s.Reason, "去掉") {
+				if !s.Kept {
+					s.Kept, s.Reason = true, r.Text
+				}
+				kept = append(kept, i)
+			}
+		} else if found {
+			break
+		}
+	}
+	return kept
 }
 
 func pct(p float64) int { return int(math.Round(p * 100)) }

@@ -17,6 +17,8 @@ import (
 //	FLASHCUT_SELFTEST=shot.png         where to save a screenshot at the end
 //	FLASHCUT_SELFTEST_CHAT="a|b|c"     chat messages to send, in order
 //	FLASHCUT_SELFTEST_EXPORT=out.mp4   export here (skipping the save dialog)
+//	FLASHCUT_SELFTEST_TEMPLATE=id      apply this template first
+//	FLASHCUT_SELFTEST_MANAGER=m.png    screenshot the template manager at the end
 func selfTest(win *mygo.Window, studio *Studio) {
 	page := win.Page()
 	eval := func(js string) string {
@@ -41,6 +43,17 @@ func selfTest(win *mygo.Window, studio *Studio) {
 	idle := `return !!window.flashcut && !window.flashcut.busy()`
 	if !waitFor("the video", `return !!window.flashcut && !!window.flashcut.projectId()`, time.Minute) {
 		return
+	}
+	if id := os.Getenv("FLASHCUT_SELFTEST_TEMPLATE"); id != "" {
+		start := time.Now()
+		js, _ := json.Marshal(id)
+		eval(`document.querySelector("#tpl-select").value = ` + string(js) + `; document.querySelector("#tpl-apply").click(); return ""`)
+		time.Sleep(time.Second)
+		if !waitFor("template", idle, 20*time.Minute) {
+			return
+		}
+		log.Printf("selftest template %s (%s): %s", id, time.Since(start).Round(time.Second),
+			eval(`return window.flashcut.lastReply() + " || " + document.querySelector("#summary").textContent`))
 	}
 	for _, msg := range strings.Split(os.Getenv("FLASHCUT_SELFTEST_CHAT"), "|") {
 		if msg = strings.TrimSpace(msg); msg == "" {
@@ -78,6 +91,14 @@ func selfTest(win *mygo.Window, studio *Studio) {
 		if png, err := win.CapturePage(); err != nil {
 			log.Printf("selftest: capture: %v", err)
 		} else if err := os.WriteFile(shot, png, 0o644); err == nil {
+			log.Printf("selftest: wrote %s", shot)
+		}
+	}
+	if shot := os.Getenv("FLASHCUT_SELFTEST_MANAGER"); strings.HasSuffix(shot, ".png") {
+		eval(`document.querySelector("#tpl-manage").click(); return ""`)
+		time.Sleep(2 * time.Second)
+		if png, err := win.CapturePage(); err == nil {
+			_ = os.WriteFile(shot, png, 0o644)
 			log.Printf("selftest: wrote %s", shot)
 		}
 	}

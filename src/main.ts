@@ -1,7 +1,7 @@
-import { Channel, isCallError } from "mygo-runtime";
+import { Channel } from "mygo-runtime";
 import { Studio, type Event, type ExportResult, type Quality, type Range, type Segment, type View } from "./mygo";
-
-const $ = <T extends HTMLElement = HTMLElement>(selector: string) => document.querySelector<T>(selector)!;
+import { $, attempt, clock, escapeHTML, mb, message, toast } from "./ui";
+import { examplesFor, initTemplates, renderPicker } from "./templates";
 
 let view: View | null = null;
 let selected = -1;
@@ -9,38 +9,8 @@ let busy: "" | "chat" | "analyze" | "export" = "";
 let running: Channel<Event> | null = null;
 let pendingText = "";
 let lastExport: ExportResult | null = null;
-
-// ---- helpers ----
-
-const clock = (sec: number) => {
-  const s = Math.max(0, Math.round(sec));
-  const h = Math.floor(s / 3600);
-  const mm = String(Math.floor((s % 3600) / 60)).padStart(h ? 2 : 1, "0");
-  const ss = String(s % 60).padStart(2, "0");
-  return h ? `${h}:${mm}:${ss}` : `${mm}:${ss}`;
-};
-const mb = (bytes: number) => `${(bytes / 1e6).toFixed(bytes > 1e8 ? 0 : 1)} MB`;
-const message = (err: unknown) => (isCallError(err) || err instanceof Error ? err.message : String(err));
 const project = () => view?.project ?? null;
-
-let toastTimer = 0;
-function toast(text: string, bad = false) {
-  const el = $("#toast");
-  el.textContent = text;
-  el.classList.toggle("bad", bad);
-  el.hidden = false;
-  clearTimeout(toastTimer);
-  toastTimer = window.setTimeout(() => (el.hidden = true), bad ? 6000 : 3000);
-}
-
-async function attempt<T>(fn: () => Promise<T>): Promise<T | undefined> {
-  try {
-    return await fn();
-  } catch (err) {
-    toast(message(err), true);
-    return undefined;
-  }
-}
+const MODE_LABELS: Record<string, string> = { keep: "保留", drop: "去掉", boost: "加分", marker: "节点", opening: "开局", ending: "结尾" };
 
 // ---- home ----
 
@@ -126,6 +96,7 @@ function setView(v: View | null | undefined) {
   renderMessages();
   renderChips();
   renderBusy();
+  renderPicker();
   showDetail(p.segments[selected]);
 }
 
@@ -192,14 +163,16 @@ function showDetail(s: Segment | undefined) {
   if (interest !== undefined) parts.push(`精彩程度 <b>${interest.toFixed(1)}</b>/4`);
   for (const r of p.edits.rules) {
     const v = s.answers?.[r.id];
-    if (v !== undefined) parts.push(`${r.mode === "drop" ? "去掉" : "保留"}“${escapeHTML(short(r.text))}” <b>${Math.round(v * 100)}%</b>`);
+    if (v !== undefined) {
+      const shown = r.question?.type === "score" ? v.toFixed(1) : `${Math.round(v * 100)}%`;
+      parts.push(`${MODE_LABELS[r.mode] ?? r.mode}“${escapeHTML(short(r.text))}” <b>${shown}</b>`);
+    }
   }
   if (s.reason) parts.push(escapeHTML(s.reason));
   el.innerHTML = parts.join(" · ");
 }
 
 const short = (t: string) => (t.length > 18 ? t.slice(0, 17) + "…" : t);
-const escapeHTML = (t: string) => t.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
 
 function selectSegment(index: number, seek: boolean) {
   const p = project();
@@ -230,19 +203,20 @@ function renderRules() {
     el.title = r.text;
     const tag = document.createElement("span");
     tag.className = `tag ${r.mode}`;
-    tag.textContent = r.mode === "drop" ? "去掉" : "保留";
+    tag.textContent = MODE_LABELS[r.mode] ?? r.mode;
     const text = document.createElement("span");
     text.className = "text";
     text.textContent = r.text;
     // Sensitivity: right is stricter (a higher probability is needed).
     const sens = document.createElement("input");
     sens.type = "range";
-    sens.min = "0.1";
-    sens.max = "0.9";
-    sens.step = "0.05";
+    const levels = r.question?.type === "score" && Array.isArray(r.question.criteria) ? r.question.criteria.length : 0;
+    sens.min = levels ? "0" : "0.1";
+    sens.max = levels ? String(levels - 1) : "0.9";
+    sens.step = levels ? "0.25" : "0.05";
     sens.value = String(r.threshold);
     sens.className = "sens";
-    sens.title = `匹配门槛 ${Math.round(r.threshold * 100)}%：往左更宽松，往右更严格`;
+    sens.title = `匹配门槛 ${levels ? r.threshold.toFixed(2) + " 级" : Math.round(r.threshold * 100) + "%"}：往左更宽松，往右更严格`;
     sens.onchange = async () => {
       const v = await attempt(() => Studio.setRule(p.id, r.id, r.enabled, Number(sens.value)));
       if (v) setView(v);
@@ -344,9 +318,12 @@ function bubble(role: string, text: string) {
 function renderChips() {
   const p = project();
   if (!p) return;
-  const ideas = p.edits.rules.length
-    ? ["再短一点", "撤销", "导出"]
-    : ["保留最精彩的部分", "去掉片头和片尾", "控制在 3 分钟以内", "只保留有人说话的部分"];
+  const fromTemplate = examplesFor(p);
+  const ideas = fromTemplate.length
+    ? [...fromTemplate, "撤销", "导出"]
+    : p.edits.rules.length
+      ? ["再短一点", "撤销", "导出"]
+      : ["保留最精彩的部分", "去掉片头和片尾", "控制在 3 分钟以内", "只保留有人说话的部分"];
   $("#chips").replaceChildren(
     ...ideas.map((t) => {
       const b = document.createElement("button");
@@ -360,7 +337,7 @@ function renderChips() {
 
 function renderBusy() {
   const on = busy !== "";
-  for (const id of ["#open", "#undo", "#export", "#analyze"]) $<HTMLButtonElement>(id).disabled = on;
+  for (const id of ["#open", "#undo", "#export", "#analyze", "#tpl-apply", "#tpl-save"]) $<HTMLButtonElement>(id).disabled = on;
   $<HTMLButtonElement>("#composer button").disabled = on;
   $("#progress").hidden = !on;
   if (!on) setProgress(0, 0, "");
@@ -529,6 +506,7 @@ $("#settings-btn").onclick = async () => {
   $<HTMLInputElement>("#s-clear").checked = false;
   $<HTMLSelectElement>("#s-concurrency").value = String(s.concurrency);
   $<HTMLSelectElement>("#s-quality").value = s.quality;
+  $<HTMLSelectElement>("#s-template").value = s.defaultTemplate;
   $("#conn-status").textContent = s.connected ? `当前通过 ${s.connection} 连接` : s.connection;
   const ff = $("#ffmpeg-status");
   ff.textContent = s.ffmpeg || "ffmpeg 已就绪";
@@ -545,6 +523,7 @@ $<HTMLDialogElement>("#settings").addEventListener("close", async () => {
       $<HTMLInputElement>("#s-clear").checked,
       Number($<HTMLSelectElement>("#s-concurrency").value),
       $<HTMLSelectElement>("#s-quality").value as Quality,
+      $<HTMLSelectElement>("#s-template").value,
     ),
   );
   $<HTMLInputElement>("#s-token").value = "";
@@ -579,6 +558,8 @@ window.flashcut = {
 };
 
 // ---- start ----
+
+await initTemplates({ project, setView, run });
 
 const initial = await attempt(() => Studio.initial());
 if (initial) openView(initial);

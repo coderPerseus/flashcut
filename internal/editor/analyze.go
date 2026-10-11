@@ -40,6 +40,14 @@ func (p *Project) question(id string) clef.Question {
 	if r == nil {
 		return clef.Noul("Is this clip worth keeping?", "", "")
 	}
+	return p.QuestionFor(*r)
+}
+
+// QuestionFor is the question the model is asked for r.
+func (p *Project) QuestionFor(r Rule) clef.Question {
+	if r.Question != nil {
+		return *r.Question
+	}
 	if r.Mode == ModeDrop {
 		return clef.Noul(
 			fmt.Sprintf("A user editing this video said: “%s”. Does this clip contain content the user wants removed?", r.Text),
@@ -81,7 +89,7 @@ func (p *Project) Analyze(ctx context.Context, ask Asker, scratch string, worker
 				seg := p.Segments[i]
 				ids := pending[i]
 				mu.Unlock()
-				answers, tokens, err := p.judge(ctx, ask, scratch, seg, ids)
+				answers, choices, tokens, err := p.judge(ctx, ask, scratch, seg, ids)
 				mu.Lock()
 				s := &p.Segments[i]
 				if err != nil {
@@ -93,11 +101,18 @@ func (p *Project) Analyze(ctx context.Context, ask Asker, scratch string, worker
 					for k, v := range answers {
 						s.Answers[k] = v
 					}
+					for k, v := range choices {
+						if s.Choices == nil {
+							s.Choices = map[string]map[string]float64{}
+						}
+						s.Choices[k] = v
+					}
 					p.Tokens += tokens
 				}
 				done++
 				snap := *s
 				snap.Answers = maps.Clone(s.Answers)
+				snap.Choices = maps.Clone(s.Choices)
 				prog := Progress{Done: done, Total: len(pending), Segment: &snap}
 				if done%10 == 0 && save != nil {
 					save()
@@ -145,18 +160,18 @@ func (p *Project) Analyze(ctx context.Context, ask Asker, scratch string, worker
 	return nil
 }
 
-func (p *Project) judge(ctx context.Context, ask Asker, scratch string, s Segment, ids []string) (map[string]float64, int, error) {
+func (p *Project) judge(ctx context.Context, ask Asker, scratch string, s Segment, ids []string) (map[string]float64, map[string]map[string]float64, int, error) {
 	clip := filepath.Join(scratch, fmt.Sprintf("seg-%05d.mp4", s.Index))
 	defer os.Remove(clip)
 	if err := media.ExtractPreview(ctx, p.Source.Path, clip, s.Start, s.End-s.Start); err != nil {
-		return nil, 0, err
+		return nil, nil, 0, err
 	}
 	data, err := os.ReadFile(clip)
 	if err != nil {
-		return nil, 0, err
+		return nil, nil, 0, err
 	}
 	if len(data) > 15<<20 {
-		return nil, 0, fmt.Errorf("片段预览 %d MiB，超过 16 MiB 上限", len(data)>>20)
+		return nil, nil, 0, fmt.Errorf("片段预览 %d MiB，超过 16 MiB 上限", len(data)>>20)
 	}
 	req := clef.Request{State: p.state(s), Questions: map[string]clef.Question{}, Videos: [][]byte{data}}
 	for _, id := range ids {
@@ -164,19 +179,23 @@ func (p *Project) judge(ctx context.Context, ask Asker, scratch string, s Segmen
 	}
 	resp, err := ask.Run(ctx, clef.Omni, req)
 	if err != nil {
-		return nil, 0, err
+		return nil, nil, 0, err
 	}
-	out := map[string]float64{}
+	out, choices := map[string]float64{}, map[string]map[string]float64{}
 	for _, id := range ids {
 		a, ok := resp.Answers[id]
 		if !ok {
-			return nil, 0, fmt.Errorf("模型没有回答问题 %s", id)
+			return nil, nil, 0, fmt.Errorf("模型没有回答问题 %s", id)
 		}
-		if a.Type == "score" {
+		switch a.Type {
+		case "score":
 			out[id] = a.Score
-		} else {
+		case "choice":
+			choices[id] = a.Probabilities
+			out[id] = a.Probabilities[a.Choice]
+		default:
 			out[id] = a.Noul
 		}
 	}
-	return out, resp.Usage.InputTokens, nil
+	return out, choices, resp.Usage.InputTokens, nil
 }
