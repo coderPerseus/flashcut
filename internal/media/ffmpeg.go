@@ -202,3 +202,33 @@ func Clock(sec float64) string {
 	}
 	return fmt.Sprintf("%d:%02d", s/60, s%60)
 }
+
+// ExtractAudio writes [start, start+dur) of src as 16 kHz mono MP3, the
+// format speech recognition expects.
+func ExtractAudio(ctx context.Context, src, dst string, start, dur float64) error {
+	ffmpeg, err := LookTool("ffmpeg")
+	if err != nil {
+		return err
+	}
+	return run(ctx, ffmpeg, "-v", "error", "-y", "-ss", ftoa(start), "-t", ftoa(dur), "-i", src,
+		"-vn", "-ac", "1", "-ar", "16000", "-c:a", "libmp3lame", "-b:a", "48k", dst)
+}
+
+// Frame returns the frame at t as a JPEG at most width pixels wide.
+func Frame(ctx context.Context, src string, t float64, width int) ([]byte, error) {
+	ffmpeg, err := LookTool("ffmpeg")
+	if err != nil {
+		return nil, err
+	}
+	var out, stderr bytes.Buffer
+	cmd := exec.CommandContext(ctx, ffmpeg, "-v", "error", "-ss", ftoa(t), "-i", src, "-frames:v", "1",
+		"-vf", fmt.Sprintf("scale='min(%d,iw)':-2", width), "-q:v", "3", "-f", "image2", "-c:v", "mjpeg", "pipe:1")
+	cmd.Stdout, cmd.Stderr = &out, &stderr
+	if err := cmd.Run(); err != nil {
+		return nil, fmt.Errorf("截取画面失败：%w: %s", err, strings.TrimSpace(stderr.String()))
+	}
+	if out.Len() == 0 {
+		return nil, fmt.Errorf("%s 处没有画面", Clock(t))
+	}
+	return out.Bytes(), nil
+}

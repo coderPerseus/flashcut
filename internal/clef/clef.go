@@ -90,6 +90,8 @@ type Request struct {
 	Questions map[string]Question `json:"questions"`
 	// Videos are MP4 files (at most 2, 16 MiB and 60 s each; Omni only).
 	Videos [][]byte `json:"-"`
+	// Images are JPEG files (at most 4).
+	Images [][]byte `json:"-"`
 }
 
 // Answer is one answer. Value is the yes probability for noul, the
@@ -153,6 +155,9 @@ func (c *Client) Run(ctx context.Context, model string, req Request) (*Response,
 		"state":     req.State,
 		"questions": req.Questions,
 	}
+	for _, img := range req.Images {
+		body["images"] = append(asStrings(body["images"]), "data:image/jpeg;base64,"+base64.StdEncoding.EncodeToString(img))
+	}
 	if len(req.Videos) > 0 {
 		var vids []string
 		for _, v := range req.Videos {
@@ -160,6 +165,22 @@ func (c *Client) Run(ctx context.Context, model string, req Request) (*Response,
 		}
 		body["videos"] = vids
 	}
+	out, err := c.RunRaw(ctx, model, body)
+	if err != nil {
+		return nil, err
+	}
+	return parse(out)
+}
+
+func asStrings(v any) []string {
+	s, _ := v.([]string)
+	return s
+}
+
+// RunRaw calls any Workers AI model with body and returns the model's
+// output (unwrapped from the REST envelope), retrying rate limits and
+// server errors.
+func (c *Client) RunRaw(ctx context.Context, model string, body any) ([]byte, error) {
 	payload, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
@@ -174,7 +195,7 @@ func (c *Client) Run(ctx context.Context, model string, req Request) (*Response,
 			out, retry, err = c.runREST(ctx, model, payload)
 		}
 		if err == nil {
-			return parse(out)
+			return unwrap(out)
 		}
 		lastErr = err
 		if !retry || ctx.Err() != nil {
@@ -239,9 +260,9 @@ func (c *Client) runCLI(ctx context.Context, model string, payload []byte) ([]by
 	return stdout.Bytes(), false, nil
 }
 
-func parse(body []byte) (*Response, error) {
-	// The REST API wraps the output in {"result": ..., "success": ...}; the
-	// cf CLI prints it bare.
+// unwrap removes the REST API's {"result": ..., "success": ...} envelope;
+// the cf CLI prints the output bare.
+func unwrap(body []byte) ([]byte, error) {
 	var env struct {
 		Result  json.RawMessage `json:"result"`
 		Success *bool           `json:"success"`
@@ -255,9 +276,17 @@ func parse(body []byte) (*Response, error) {
 			for _, e := range env.Errors {
 				msgs = append(msgs, e.Message)
 			}
-			return nil, fmt.Errorf("Clef: %s", strings.Join(msgs, "; "))
+			return nil, fmt.Errorf("Workers AI: %s", strings.Join(msgs, "; "))
 		}
-		body = env.Result
+		return env.Result, nil
+	}
+	return body, nil
+}
+
+func parse(body []byte) (*Response, error) {
+	body, err := unwrap(body)
+	if err != nil {
+		return nil, err
 	}
 	var r Response
 	if err := json.Unmarshal(body, &r); err != nil || len(r.Answers) == 0 {
