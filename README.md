@@ -1,46 +1,56 @@
-# LoL 高光剪辑
+# 闪剪
 
-用 [MyGo](https://mygo.egoist.dev/) 写的桌面应用：选一场英雄联盟比赛录像，切成 20 秒的小段，交给 Cloudflare **Clef-omni**（兼容 Jev 决策 API，支持带声音的视频）逐段判断保留还是丢弃，再用 ffmpeg 把保留的片段拼成精彩集锦。
+用 [MyGo](https://mygo.egoist.dev/) 写的 macOS 桌面应用：打开任意视频，用一句话说出剪辑要求，闪剪逐段看完视频、挑出符合要求的片段，再用 ffmpeg 导出成片。
+
+- **视频理解**：Cloudflare **Clef-omni**（兼容 Jev 决策 API，能看画面也能听声音），每段视频回答“精彩程度 0–4”以及每条剪辑要求“是否符合”。
+- **聊天理解**：**Clef-flash** 判断一句话想做什么（保留 / 去掉某类内容、改时长、指定时间段、撤销、重来、导出），一句话可以同时包含多个动作；时长和时间段由本地规则解析（支持“3:20 到 4:10”“开头 30 秒”“最后 1 分钟”“控制在 5 分钟”“一分半”“再短一点”）。
+- **剪辑引擎**（`internal/editor`）：
+  - 有“保留”要求时，只保留命中的片段；没有时按精彩程度挑选。
+  - “去掉”要求优先于“保留”。
+  - 时长上限按相关度裁剪，并把前后留白、补齐空隙都算进去。
+  - 精确时间段按秒切，不受分段限制。
+  - 手动保留 / 剪掉某一段。
+  - 50 步撤销。
+  - 每个视频一个项目，自动保存，聊天记录也会保存。
+- **增量分析**：模型的回答按问题缓存，新增一条要求只问这一个问题，改阈值、时长、时间段都不再调用模型。
 
 ## 依赖
 
 - Go 1.27+（`GOTOOLCHAIN=auto` 会自动下载）、Bun、ffmpeg/ffprobe（`brew install ffmpeg`）
 - Cloudflare 凭证，二选一：
-  - 环境变量 `CLOUDFLARE_ACCOUNT_ID` + `CLOUDFLARE_API_TOKEN`（Workers AI 权限），走 REST API
-  - 已登录的 `cf` CLI（`cf auth login`），应用会调用 `cf ai run @cf/cloudflare/clef-omni`
+  - 在应用「设置」里填 Account ID 和 API Token（需要 Workers AI 权限）。只保存在本机，文件权限 0600，不会回传给页面。
+  - 本机已登录的 `cf` 命令行（`cf auth login`）。
 
 ## 运行
 
 ```bash
 bun install
 bun run dev        # 开发模式（Vite 端口 5188）
-bun run build      # 打包 LoL Highlights.app / .dmg 到 build/darwin-arm64/
+bun run build      # 打包 闪剪.app / .dmg 到 build/darwin-arm64/
+go test ./...      # 单元测试（选段、解析、撤销、增量分析）
 ```
 
-命令行版本（不开窗口，方便批量或调试）：
+命令行版本，和聊天走同一套逻辑：
 
 ```bash
-go run ./cmd/lolcut -o out.mp4 match.mp4
-go run ./cmd/lolcut -analyze-only -keep 0.9 -score 2.5 match.mp4
+go run ./cmd/flashcut -m "只保留击杀和团战" -m "控制在5分钟以内" -o out.mp4 match.mp4
 ```
 
-## 流程
+## 费用和速度（实测）
 
-1. `ffprobe` 读时长，按段长切分。
-2. 每段用 ffmpeg 转成 480p/4fps/单声道小文件，base64 发给 Clef-omni，一次问六个问题：
-   - `keep`（noul）：该不该进集锦
-   - `kill`（noul）：有没有英雄被击杀
-   - `opening` / `ending`（noul）：是不是比赛开局 / 结尾
-   - `score`（score 0–4）：精彩程度
-   - `scene`（choice）：BP、解说台、对线、小规模交战、团战、资源、回放、结束
-3. 保留规则：`keep ≥ 0.9`、`score ≥ 2.5` 或 `kill ≥ 0.4` 任一满足就保留；另外保留开局和结尾（各取最靠前 / 最靠后的一串命中段，避免中途误判），并补齐两段保留之间的单个空隙。界面里可以拖阈值实时重选，也可以单击两次手动切换某一段。
-4. 判定结果缓存在 `~/Library/Caches/<应用名>/`，改阈值不会重新调用模型；问题改了（`QuestionsVersion`）会自动重新判定。
-5. 按保留区间从原片重新编码切出（准确到帧边界），用 concat 拼接，输出到 `~/Movies/LoL Highlights/`。
+48 分钟、720p 的英雄联盟比赛，切成 191 段，每段 15 秒：
 
-## 实测
+- 第一次分析约 2 分 50 秒（4 路并发），约 75 万 token，约 $0.12。
+- 之后每新增一条“保留 / 去掉”要求，会再跑一遍，花费相近。
+- 聊天理解每句约 400 token，不到 $0.0001。
 
-LCK 决赛 GEN vs HLE，47:39 / 367 MB：143 段全部判定成功，约 89 万输入 token（约 $0.13），4 路并发约 2.5 分钟。对照画面顶部比分，15 个有击杀的片段在 `kill ≥ 0.4` 下全部保留（0.5 会漏 1 个）。最终保留 66 段，生成 22:00 的集锦，剪辑约 1.5 分钟。
+要求“保留所有击杀和团战”时，对照画面顶部比分，15 处击杀命中 13 处。可以在要求标签上把灵敏度往左拉，或者补一句“也保留……”，提高召回。
 
 ## 自测
 
-`LOL_HIGHLIGHTS_OPEN=<视频> LOL_HIGHLIGHTS_SELFTEST=<截图.png> bun run dev` 会自动打开视频、点击分析和生成，并保存窗口截图。
+```bash
+FLASHCUT_OPEN=<视频> FLASHCUT_SELFTEST=shot.png FLASHCUT_SELFTEST_CHAT="保留精彩片段|控制在3分钟以内" FLASHCUT_SELFTEST_EXPORT=out.mp4 \
+  build/darwin-arm64/闪剪.app/Contents/MacOS/闪剪
+```
+
+自测会自动打开视频、依次发送聊天消息、导出并截图，日志写在标准输出。

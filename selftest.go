@@ -1,6 +1,8 @@
 package main
 
 import (
+	"context"
+	"encoding/json"
 	"log"
 	"os"
 	"strings"
@@ -9,55 +11,75 @@ import (
 	"github.com/egoist/mygo"
 )
 
-// selfTest drives the page like a user when LOL_HIGHLIGHTS_SELFTEST is set
-// (together with LOL_HIGHLIGHTS_OPEN): it clicks 分析, then 生成集锦, and
-// logs what the page shows. Used to verify the app end to end.
-func selfTest(win *mygo.Window) {
+// selfTest drives the app like a user, for end-to-end checks:
+//
+//	FLASHCUT_OPEN=video.mp4            the video to open
+//	FLASHCUT_SELFTEST=shot.png         where to save a screenshot at the end
+//	FLASHCUT_SELFTEST_CHAT="a|b|c"     chat messages to send, in order
+//	FLASHCUT_SELFTEST_EXPORT=out.mp4   export here (skipping the save dialog)
+func selfTest(win *mygo.Window, studio *Studio) {
 	page := win.Page()
+	eval := func(js string) string {
+		v, err := mygo.EvalAs[string](page, js)
+		if err != nil {
+			return "error: " + err.Error()
+		}
+		return v
+	}
 	waitFor := func(what, cond string, limit time.Duration) bool {
 		deadline := time.Now().Add(limit)
 		for time.Now().Before(deadline) {
-			ok, err := mygo.EvalAs[bool](page, cond)
-			if err == nil && ok {
+			if ok, err := mygo.EvalAs[bool](page, cond); err == nil && ok {
 				return true
-			}
-			if err != nil {
-				log.Printf("selftest: eval: %v", err)
 			}
 			time.Sleep(time.Second)
 		}
-		text, _ := mygo.EvalAs[string](page, `return location.href + " :: error=" + document.querySelector("#error").textContent + " :: " + document.body.innerText.slice(0, 200)`)
-		log.Printf("selftest: timed out waiting for %s; page: %s", what, text)
+		log.Printf("selftest: timed out waiting for %s; page: %s", what,
+			eval(`return (document.querySelector("#error")?.textContent ?? "") + " :: " + document.body.innerText.slice(0, 300)`))
 		return false
 	}
-	report := func(step string) {
-		s, _ := mygo.EvalAs[string](page, `return [document.querySelector("#stats").textContent, document.querySelector("#progress span").textContent, document.querySelector("#error").textContent, document.querySelector("#out-meta").textContent].join(" | ")`)
-		log.Printf("selftest %s: %s", step, s)
-	}
-	if !waitFor("the video to load", `return !document.querySelector("#workspace").hidden`, 30*time.Second) {
+	idle := `return !!window.flashcut && !window.flashcut.busy()`
+	if !waitFor("the video", `return !!window.flashcut && !!window.flashcut.projectId()`, time.Minute) {
 		return
 	}
-	start := time.Now()
-	_, _ = page.Eval(`document.querySelector("#analyze").click()`)
-	time.Sleep(time.Second)
-	if !waitFor("analysis", `return !document.querySelector("#analyze").disabled`, 15*time.Minute) {
-		return
+	for _, msg := range strings.Split(os.Getenv("FLASHCUT_SELFTEST_CHAT"), "|") {
+		if msg = strings.TrimSpace(msg); msg == "" {
+			continue
+		}
+		start := time.Now()
+		js, _ := json.Marshal(msg)
+		eval(`window.flashcut.send(` + string(js) + `); return ""`)
+		time.Sleep(time.Second)
+		if !waitFor("chat reply", idle, 20*time.Minute) {
+			return
+		}
+		log.Printf("selftest chat %q (%s): %s", msg, time.Since(start).Round(time.Second),
+			eval(`return window.flashcut.lastReply() + " || " + document.querySelector("#summary").textContent`))
 	}
-	report("analyzed in " + time.Since(start).Round(time.Second).String())
-	_, _ = page.Eval(`document.querySelector("#render").click()`)
-	time.Sleep(time.Second)
-	if !waitFor("render", `return !document.querySelector("#render").disabled`, 15*time.Minute) {
-		return
-	}
-	report("rendered")
-	// Select a kept segment so the screenshot shows its verdict.
-	_, _ = page.Eval(`const el = document.querySelector(".seg.kept"); el && el.click()`)
-	time.Sleep(2 * time.Second)
-	if out := os.Getenv("LOL_HIGHLIGHTS_SELFTEST"); strings.HasSuffix(out, ".png") {
-		if png, err := win.CapturePage(); err != nil {
-			log.Printf("selftest: capture: %v", err)
-		} else if err := os.WriteFile(out, png, 0o644); err == nil {
-			log.Printf("selftest: wrote %s", out)
+	if out := os.Getenv("FLASHCUT_SELFTEST_EXPORT"); out != "" {
+		id := eval(`return window.flashcut.projectId()`)
+		e, err := studio.entry(id)
+		if err != nil {
+			log.Printf("selftest: %v", err)
+			return
+		}
+		e.mu.Lock()
+		res, err := studio.export(context.Background(), e.p, out, nil)
+		e.mu.Unlock()
+		if err != nil {
+			log.Printf("selftest: export: %v", err)
+		} else {
+			log.Printf("selftest: exported %s (%.0fs, %d bytes)", res.Path, res.Duration, res.Size)
 		}
 	}
+	if shot := os.Getenv("FLASHCUT_SELFTEST"); strings.HasSuffix(shot, ".png") {
+		eval(`window.flashcut.selectFirstKept(); return ""`)
+		time.Sleep(2 * time.Second)
+		if png, err := win.CapturePage(); err != nil {
+			log.Printf("selftest: capture: %v", err)
+		} else if err := os.WriteFile(shot, png, 0o644); err == nil {
+			log.Printf("selftest: wrote %s", shot)
+		}
+	}
+	log.Printf("selftest: done")
 }

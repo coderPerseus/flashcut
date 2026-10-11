@@ -1,153 +1,178 @@
 import { Channel, isCallError } from "mygo-runtime";
-import { Studio, type Options, type Progress, type Project, type RenderProgress, type Segment } from "./mygo";
+import { Studio, type Event, type ExportResult, type Quality, type Range, type Segment, type View } from "./mygo";
 
-const $ = <T extends HTMLElement>(selector: string) => document.querySelector<T>(selector)!;
+const $ = <T extends HTMLElement = HTMLElement>(selector: string) => document.querySelector<T>(selector)!;
 
-const SCENES: Record<string, string> = {
-  draft: "BP 选人",
-  desk: "解说台/观众/广告",
-  laning: "对线发育",
-  skirmish: "小规模交战",
-  teamfight: "团战",
-  objective: "资源争夺",
-  replay: "精彩回放",
-  end: "比赛结束",
-};
-
-let project: Project | null = null;
-let options: Options = await Studio.defaults();
-let segments: Segment[] = [];
+let view: View | null = null;
 let selected = -1;
-let busy = false;
-let analyzing: Channel<Progress> | null = null;
+let busy: "" | "chat" | "analyze" | "export" = "";
+let running: Channel<Event> | null = null;
+let pendingText = "";
+let lastExport: ExportResult | null = null;
+
+// ---- helpers ----
 
 const clock = (sec: number) => {
-  const s = Math.round(sec);
+  const s = Math.max(0, Math.round(sec));
   const h = Math.floor(s / 3600);
   const mm = String(Math.floor((s % 3600) / 60)).padStart(h ? 2 : 1, "0");
   const ss = String(s % 60).padStart(2, "0");
   return h ? `${h}:${mm}:${ss}` : `${mm}:${ss}`;
 };
-const mb = (bytes: number) => `${(bytes / 1024 / 1024).toFixed(0)} MB`;
+const mb = (bytes: number) => `${(bytes / 1e6).toFixed(bytes > 1e8 ? 0 : 1)} MB`;
+const message = (err: unknown) => (isCallError(err) || err instanceof Error ? err.message : String(err));
+const project = () => view?.project ?? null;
 
-function showError(err: unknown) {
-  const el = $("#error");
-  el.hidden = !err;
-  el.textContent = err ? (isCallError(err) || err instanceof Error ? err.message : String(err)) : "";
+let toastTimer = 0;
+function toast(text: string, bad = false) {
+  const el = $("#toast");
+  el.textContent = text;
+  el.classList.toggle("bad", bad);
+  el.hidden = false;
+  clearTimeout(toastTimer);
+  toastTimer = window.setTimeout(() => (el.hidden = true), bad ? 6000 : 3000);
 }
 
-function setBusy(on: boolean) {
-  busy = on;
-  for (const id of ["#pick", "#analyze", "#opt-seg"]) $<HTMLButtonElement>(id).disabled = on;
-  $<HTMLButtonElement>("#render").disabled = on || !project?.ranges?.length;
+async function attempt<T>(fn: () => Promise<T>): Promise<T | undefined> {
+  try {
+    return await fn();
+  } catch (err) {
+    toast(message(err), true);
+    return undefined;
+  }
 }
 
-function setProgress(done: number, total: number, label: string) {
-  const el = $("#progress");
-  el.hidden = total === 0;
-  $(".progress .bar").style.width = total ? `${(done / total) * 100}%` : "0";
-  $(".progress span").textContent = label;
+// ---- home ----
+
+async function showHome() {
+  view = null;
+  $("#home").hidden = false;
+  $("#workspace").hidden = true;
+  $("#export").hidden = true;
+  $("#undo").hidden = true;
+  $("#project-name").textContent = "说一句话，剪好一条视频";
+  const recent = (await attempt(() => Studio.recent())) ?? [];
+  const box = $("#recent");
+  box.replaceChildren();
+  if (recent.length) {
+    const h = document.createElement("h3");
+    h.textContent = "最近的项目";
+    box.append(h);
+  }
+  for (const r of recent) {
+    const item = document.createElement("div");
+    item.className = "recent-item" + (r.missing ? " missing" : "");
+    const left = document.createElement("div");
+    const name = document.createElement("div");
+    name.className = "name";
+    name.textContent = r.name;
+    const meta = document.createElement("div");
+    meta.className = "muted";
+    meta.textContent = r.missing
+      ? "原视频已移动或删除"
+      : `${clock(r.duration)} → 成片 ${clock(r.keptSeconds)} · ${new Date(r.updatedAt).toLocaleString()}`;
+    left.append(name, meta);
+    const forget = document.createElement("button");
+    forget.className = "small";
+    forget.textContent = "移除";
+    forget.onclick = async (e) => {
+      e.stopPropagation();
+      await attempt(() => Studio.forget(r.id));
+      showHome();
+    };
+    item.append(left, forget);
+    if (!r.missing) item.onclick = async () => openView(await attempt(() => Studio.open(r.id)));
+    box.append(item);
+  }
+  renderConnection();
 }
 
-// ---- options ----
-
-function renderOptions() {
-  $<HTMLSelectElement>("#opt-seg").value = String(options.segmentSeconds);
-  $<HTMLInputElement>("#opt-keep").value = String(options.keepThreshold);
-  $<HTMLInputElement>("#opt-score").value = String(options.scoreThreshold);
-  $<HTMLInputElement>("#opt-kill").value = String(options.killThreshold);
-  $<HTMLInputElement>("#opt-opening").checked = options.keepOpening;
-  $<HTMLInputElement>("#opt-ending").checked = options.keepEnding;
-  $<HTMLInputElement>("#opt-fill").checked = options.fillGaps;
-  $("#opt-kill-v").textContent = options.killThreshold > 1 ? "关" : options.killThreshold.toFixed(2);
-  $("#opt-keep-v").textContent = options.keepThreshold > 1 ? "关" : options.keepThreshold.toFixed(2);
-  $("#opt-score-v").textContent = options.scoreThreshold > 4 ? "关" : options.scoreThreshold.toFixed(2);
+async function pick() {
+  if (busy) return toast("请等当前操作完成");
+  const v = await attempt(() => Studio.pickVideo());
+  if (v) openView(v);
 }
+$("#open").onclick = pick;
+$("#open-big").onclick = pick;
 
-let reselectTimer = 0;
-function onOptionsChanged() {
-  options = {
-    ...options,
-    segmentSeconds: Number($<HTMLSelectElement>("#opt-seg").value),
-    keepThreshold: Number($<HTMLInputElement>("#opt-keep").value),
-    scoreThreshold: Number($<HTMLInputElement>("#opt-score").value),
-    killThreshold: Number($<HTMLInputElement>("#opt-kill").value),
-    keepOpening: $<HTMLInputElement>("#opt-opening").checked,
-    keepEnding: $<HTMLInputElement>("#opt-ending").checked,
-    fillGaps: $<HTMLInputElement>("#opt-fill").checked,
-  };
-  renderOptions();
-  if (!project?.segments?.length || busy) return;
-  if (options.segmentSeconds !== project.options.segmentSeconds) return; // needs a new analysis
-  clearTimeout(reselectTimer);
-  reselectTimer = window.setTimeout(async () => {
-    try {
-      const p = await Studio.reselect(project!.source.path, options);
-      if (p) load(p);
-    } catch (err) {
-      showError(err);
-    }
-  }, 120);
-}
-for (const id of ["#opt-seg", "#opt-keep", "#opt-score", "#opt-kill", "#opt-opening", "#opt-ending", "#opt-fill"]) $(id).addEventListener("input", onOptionsChanged);
-
-// ---- project ----
-
-function load(p: Project) {
-  project = p;
-  segments = p.segments ?? [];
-  $("#empty").hidden = true;
+function openView(v: View | null | undefined) {
+  if (!v?.project) return;
+  selected = -1;
+  lastExport = null;
+  $("#result").hidden = true;
+  setView(v);
+  $("#home").hidden = true;
   $("#workspace").hidden = false;
-  const name = p.source.path.split("/").pop()!;
-  $("#src-name").textContent = name;
-  $("#src-meta").textContent = `${clock(p.source.duration)} · ${p.source.width}×${p.source.height} · ${mb(p.source.size)}${p.source.hasAudio ? "" : " · 无音轨"}`;
-  const video = $<HTMLVideoElement>("#src-video");
-  if (video.dataset.src !== p.mediaUrl) {
-    video.src = p.mediaUrl;
-    video.dataset.src = p.mediaUrl;
-  }
-  $<HTMLButtonElement>("#analyze").textContent = segments.some((s) => s.verdict) ? "重新分析" : "开始分析";
-  renderTimeline();
-  renderStats();
-  setBusy(busy);
+  const video = $<HTMLVideoElement>("#video");
+  video.src = v.mediaUrl;
+  $<HTMLInputElement>("#target").value = v.project.edits.targetSeconds ? String(Math.round(v.project.edits.targetSeconds)) : "";
+  $("#input").focus();
 }
 
-function renderStats() {
-  const el = $("#stats");
-  if (!project?.stats || !segments.length) {
-    el.textContent = "";
-    return;
-  }
-  const st = project.stats;
-  const pct = st.totalSeconds ? Math.round((st.keptSeconds / st.totalSeconds) * 100) : 0;
-  const cost = (st.tokens / 1e6) * 0.15;
-  el.textContent =
-    `保留 ${st.kept}/${st.segments} 段 · ${clock(st.keptSeconds)}（${pct}%）` +
-    (st.failed ? ` · 失败 ${st.failed}` : "") +
-    ` · ${(st.tokens / 1000).toFixed(0)}k token ≈ $${cost.toFixed(2)} · ${project.judge}`;
+// ---- rendering ----
+
+function setView(v: View | null | undefined) {
+  if (!v?.project) return;
+  view = v;
+  const p = v.project;
+  $("#project-name").textContent = `${p.source.path.split("/").pop()} · ${clock(p.source.duration)}`;
+  $("#export").hidden = false;
+  $("#undo").hidden = false;
+  renderSummary();
+  renderTimeline();
+  renderRanges();
+  renderRules();
+  renderOptions();
+  renderMessages();
+  renderChips();
+  renderBusy();
+  showDetail(p.segments[selected]);
+}
+
+function renderSummary() {
+  if (!view) return;
+  const s = view.summary;
+  const parts = [`成片 ${clock(s.keptSeconds)} / 原片 ${clock(project()!.source.duration)}`, `${s.clips} 个片段`];
+  if (s.analyzed < s.segments) parts.push(`已分析 ${s.analyzed}/${s.segments}`);
+  if (s.failed) parts.push(`失败 ${s.failed}`);
+  if (s.tokens) parts.push(`已花费 ≈ $${s.costUsd.toFixed(2)}`);
+  $("#summary").textContent = parts.join(" · ");
 }
 
 function renderTimeline() {
+  const p = project();
+  if (!p) return;
   const tl = $("#timeline");
-  tl.replaceChildren(
-    ...segments.map((s) => {
-      const el = document.createElement("div");
-      el.className = "seg";
-      const bar = document.createElement("i");
-      if (s.verdict) {
-        bar.style.height = `${Math.max(3, (s.verdict.score / 4) * 100)}%`;
-        if (s.kept) el.classList.add("kept");
-        if (s.verdict.kill >= options.killThreshold) el.classList.add("kill");
-      } else if (s.error) {
-        el.classList.add("failed");
-      } else {
-        el.classList.add("pending");
-      }
-      if (s.index === selected) el.classList.add("selected");
-      el.append(bar);
-      el.addEventListener("mouseenter", () => showDetail(s));
-      el.addEventListener("mouseleave", () => showDetail(segments[selected]));
-      el.addEventListener("click", () => onSegmentClick(s));
+  const playhead = $("#playhead");
+  const bars = p.segments.map((s) => {
+    const el = document.createElement("div");
+    el.className = "seg";
+    const bar = document.createElement("i");
+    const interest = s.answers?.interest;
+    if (s.error) el.classList.add("failed");
+    else if (interest === undefined) el.classList.add("pending");
+    else bar.style.height = `${Math.max(4, (interest / 4) * 100)}%`;
+    if (s.kept) el.classList.add("kept");
+    if (p.edits.overrides?.[s.index] !== undefined) el.classList.add("pinned");
+    if (s.index === selected) el.classList.add("selected");
+    el.append(bar);
+    el.onmouseenter = () => showDetail(s);
+    el.onmouseleave = () => showDetail(project()?.segments[selected]);
+    el.onclick = () => selectSegment(s.index, true);
+    return el;
+  });
+  tl.replaceChildren(...bars, playhead);
+}
+
+function renderRanges() {
+  const p = project();
+  if (!p || !view) return;
+  const bar = $("#ranges-bar");
+  bar.replaceChildren(
+    ...view.ranges.map((r) => {
+      const el = document.createElement("span");
+      el.style.left = `${(r.start / p.source.duration) * 100}%`;
+      el.style.width = `${((r.end - r.start) / p.source.duration) * 100}%`;
       return el;
     }),
   );
@@ -155,145 +180,406 @@ function renderTimeline() {
 
 function showDetail(s: Segment | undefined) {
   const el = $("#detail");
-  if (!s) {
-    el.textContent = "悬停或点击某一段查看模型判定。";
+  const p = project();
+  $("#seg-actions").hidden = !(s && s.index === selected);
+  if (!s || !p) {
+    el.textContent = "点击时间线上的一段可以跳转预览，并手动保留或剪掉。";
     return;
   }
-  const range = `<b>${clock(s.start)} – ${clock(s.end)}</b>`;
-  if (s.error) {
-    el.innerHTML = `${range} · 判定失败：`;
-    el.append(s.error);
-    return;
+  const parts = [`<b>${clock(s.start)} – ${clock(s.end)}</b>`, s.kept ? "<b>保留</b>" : "剪掉"];
+  if (s.error) parts.push(`分析失败：${escapeHTML(s.error)}`);
+  const interest = s.answers?.interest;
+  if (interest !== undefined) parts.push(`精彩程度 <b>${interest.toFixed(1)}</b>/4`);
+  for (const r of p.edits.rules) {
+    const v = s.answers?.[r.id];
+    if (v !== undefined) parts.push(`${r.mode === "drop" ? "去掉" : "保留"}“${escapeHTML(short(r.text))}” <b>${Math.round(v * 100)}%</b>`);
   }
-  if (!s.verdict) {
-    el.innerHTML = `${range} · 等待判定`;
-    return;
-  }
-  const v = s.verdict;
-  el.innerHTML =
-    `${range} · ${s.kept ? "<b>保留</b>" : "丢弃"} · 场景：<b>${SCENES[v.scene] ?? v.scene}</b>（${Math.round((v.sceneProbs[v.scene] ?? 0) * 100)}%）` +
-    ` · 保留概率 <b>${Math.round(v.keep * 100)}%</b> · 精彩分 <b>${v.score.toFixed(2)}</b>/4` +
-    ` · 击杀 <b>${Math.round(v.kill * 100)}%</b>` +
-    (v.opening >= 0.5 ? ` · <b>开局</b>（${Math.round(v.opening * 100)}%）` : "") +
-    (v.ending >= 0.5 ? ` · <b>结尾</b>（${Math.round(v.ending * 100)}%）` : "");
+  if (s.reason) parts.push(escapeHTML(s.reason));
+  el.innerHTML = parts.join(" · ");
 }
 
-async function onSegmentClick(s: Segment) {
-  const video = $<HTMLVideoElement>("#src-video");
-  if (selected === s.index && s.verdict && project && !busy) {
-    try {
-      const p = await Studio.setKept(project.source.path, s.index, !s.kept, options);
-      if (p) load(p);
-      showDetail(segments[selected]);
-    } catch (err) {
-      showError(err);
-    }
-    return;
-  }
-  selected = s.index;
-  video.currentTime = s.start;
+const short = (t: string) => (t.length > 18 ? t.slice(0, 17) + "…" : t);
+const escapeHTML = (t: string) => t.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
+
+function selectSegment(index: number, seek: boolean) {
+  const p = project();
+  if (!p) return;
+  selected = index;
+  const s = p.segments[index];
+  if (seek && s) $<HTMLVideoElement>("#video").currentTime = s.start + 0.01;
   renderTimeline();
   showDetail(s);
 }
 
-// ---- actions ----
-
-$("#pick").addEventListener("click", async () => {
-  showError(null);
-  try {
-    const p = await Studio.pickVideo();
-    if (!p) return;
-    selected = -1;
-    options = { ...options, segmentSeconds: p.options.segmentSeconds };
-    renderOptions();
-    $<HTMLVideoElement>("#out-video").hidden = true;
-    $("#out-empty").hidden = false;
-    $("#out-meta").textContent = "";
-    $("#reveal").hidden = true;
-    load(p);
-  } catch (err) {
-    showError(err);
-  }
-});
-
-$("#analyze").addEventListener("click", async () => {
-  if (!project) return;
-  showError(null);
-  setBusy(true);
-  $("#cancel").hidden = false;
-  const total = Math.ceil(project.source.duration / options.segmentSeconds);
-  if (options.segmentSeconds !== project.options.segmentSeconds || !segments.length) {
-    segments = Array.from({ length: total }, (_, i) => ({
-      index: i,
-      start: i * options.segmentSeconds,
-      end: Math.min((i + 1) * options.segmentSeconds, project!.source.duration),
-      verdict: null,
-      kept: false,
-    }));
-  }
-  renderTimeline();
-  setProgress(0, total, "准备中…");
-  const started = performance.now();
-  analyzing = new Channel<Progress>((p) => {
-    if (p.segment) {
-      segments[p.segment.index] = p.segment;
-      const v = p.segment.verdict;
-      if (v) p.segment.kept = v.keep >= options.keepThreshold || v.score >= options.scoreThreshold || v.kill >= options.killThreshold;
-    }
-    const secs = (performance.now() - started) / 1000;
-    const eta = p.done ? Math.round((secs / p.done) * (p.total - p.done)) : 0;
-    setProgress(p.done, p.total, `已判定 ${p.done}/${p.total} 段` + (p.done < p.total && eta ? ` · 预计还需 ${clock(eta)}` : ""));
-    renderTimeline();
-  });
-  try {
-    const p = await Studio.analyze(project.source.path, options, analyzing);
-    if (p) load(p);
-    setProgress(0, 0, "");
-  } catch (err) {
-    showError(err);
-  } finally {
-    analyzing = null;
-    $("#cancel").hidden = true;
-    setBusy(false);
-  }
-});
-
-$("#cancel").addEventListener("click", () => analyzing?.close());
-
-$("#render").addEventListener("click", async () => {
-  if (!project) return;
-  showError(null);
-  setBusy(true);
-  setProgress(0, project.ranges.length, "剪辑中…");
-  const progress = new Channel<RenderProgress>((p) => setProgress(p.done, p.total, `已剪辑 ${p.done}/${p.total} 个片段`));
-  try {
-    const r = await Studio.render(project.source.path, progress);
-    if (!r) return;
-    const video = $<HTMLVideoElement>("#out-video");
-    video.src = r.mediaUrl;
-    video.hidden = false;
-    $("#out-empty").hidden = true;
-    $("#out-meta").textContent = `${clock(r.duration)} · ${mb(r.size)} · ${r.path}`;
-    const reveal = $("#reveal");
-    reveal.hidden = false;
-    reveal.onclick = () => Studio.reveal(r.path);
-  } catch (err) {
-    showError(err);
-  } finally {
-    setProgress(0, 0, "");
-    setBusy(false);
-  }
-});
-
-renderOptions();
-
-try {
-  const initial = await Studio.initial();
-  if (initial) {
-    options = { ...options, segmentSeconds: initial.options.segmentSeconds };
-    renderOptions();
-    load(initial);
-  }
-} catch (err) {
-  showError(err);
+for (const btn of document.querySelectorAll<HTMLButtonElement>("#seg-actions button")) {
+  btn.onclick = async () => {
+    const p = project();
+    if (!p || selected < 0 || busy) return;
+    const v = await attempt(() => Studio.setOverride(p.id, selected, btn.dataset.mode!));
+    if (v) setView(v);
+  };
 }
+
+function renderRules() {
+  const p = project();
+  if (!p) return;
+  const box = $("#rules");
+  const chips: HTMLElement[] = p.edits.rules.map((r) => {
+    const el = document.createElement("span");
+    el.className = "rule" + (r.enabled ? "" : " off");
+    el.title = r.text;
+    const tag = document.createElement("span");
+    tag.className = `tag ${r.mode}`;
+    tag.textContent = r.mode === "drop" ? "去掉" : "保留";
+    const text = document.createElement("span");
+    text.className = "text";
+    text.textContent = r.text;
+    // Sensitivity: right is stricter (a higher probability is needed).
+    const sens = document.createElement("input");
+    sens.type = "range";
+    sens.min = "0.1";
+    sens.max = "0.9";
+    sens.step = "0.05";
+    sens.value = String(r.threshold);
+    sens.className = "sens";
+    sens.title = `匹配门槛 ${Math.round(r.threshold * 100)}%：往左更宽松，往右更严格`;
+    sens.onchange = async () => {
+      const v = await attempt(() => Studio.setRule(p.id, r.id, r.enabled, Number(sens.value)));
+      if (v) setView(v);
+    };
+    const toggle = document.createElement("button");
+    toggle.textContent = r.enabled ? "停用" : "启用";
+    toggle.onclick = async () => {
+      const v = await attempt(() => Studio.setRule(p.id, r.id, !r.enabled, r.threshold));
+      if (v) setView(v);
+    };
+    const del = document.createElement("button");
+    del.textContent = "✕";
+    del.title = "删除这条要求";
+    del.onclick = async () => {
+      const v = await attempt(() => Studio.deleteRule(p.id, r.id));
+      if (v) setView(v);
+    };
+    el.append(tag, text, sens, toggle, del);
+    return el;
+  });
+  p.edits.ranges.forEach((r, i) => {
+    const el = document.createElement("span");
+    el.className = "rule";
+    const tag = document.createElement("span");
+    tag.className = `tag ${r.keep ? "keep" : "drop"}`;
+    tag.textContent = r.keep ? "保留" : "去掉";
+    const text = document.createElement("span");
+    text.className = "text";
+    text.textContent = `${clock(r.start)} – ${clock(r.end)}`;
+    const del = document.createElement("button");
+    del.textContent = "✕";
+    del.onclick = async () => {
+      const v = await attempt(() => Studio.deleteRange(p.id, i));
+      if (v) setView(v);
+    };
+    el.append(tag, text, del);
+    chips.push(el);
+  });
+  box.replaceChildren(...chips);
+  const hasKeep = p.edits.rules.some((r) => r.enabled && r.mode === "keep");
+  $("#interest-opt").hidden = hasKeep;
+  $<HTMLButtonElement>("#analyze").textContent = view!.summary.analyzed < view!.summary.segments ? "智能剪辑" : "重新挑选";
+}
+
+function renderOptions() {
+  const p = project();
+  if (!p) return;
+  $<HTMLInputElement>("#interest").value = String(p.edits.interestThreshold);
+  $("#interest-v").textContent = p.edits.interestThreshold.toFixed(1);
+  $<HTMLInputElement>("#fill").checked = p.edits.fillGaps;
+  $<HTMLSelectElement>("#pad").value = String(p.edits.padSeconds ?? 0);
+  if (document.activeElement !== $("#target")) {
+    $<HTMLInputElement>("#target").value = p.edits.targetSeconds ? String(Math.round(p.edits.targetSeconds)) : "";
+  }
+}
+
+let optTimer = 0;
+function onOptions() {
+  const p = project();
+  if (!p || busy) return;
+  const interest = Number($<HTMLInputElement>("#interest").value);
+  $("#interest-v").textContent = interest.toFixed(1);
+  clearTimeout(optTimer);
+  optTimer = window.setTimeout(async () => {
+    const v = await attempt(() =>
+      Studio.setOptions(
+        p.id,
+        interest,
+        Number($<HTMLInputElement>("#target").value) || 0,
+        $<HTMLInputElement>("#fill").checked,
+        Number($<HTMLSelectElement>("#pad").value),
+      ),
+    );
+    if (v) setView(v);
+  }, 150);
+}
+$("#interest").addEventListener("input", onOptions);
+$("#target").addEventListener("change", onOptions);
+$("#fill").addEventListener("input", onOptions);
+$("#pad").addEventListener("change", onOptions);
+
+function renderMessages(lastPending = "") {
+  const p = project();
+  if (!p) return;
+  const box = $("#messages");
+  const els = (p.chat ?? []).map((m) => bubble(m.role, m.text));
+  if (lastPending) els.push(bubble("assistant pending", lastPending));
+  box.replaceChildren(...els);
+  box.scrollTop = box.scrollHeight;
+}
+
+function bubble(role: string, text: string) {
+  const el = document.createElement("div");
+  el.className = `msg ${role}`;
+  el.textContent = text;
+  return el;
+}
+
+function renderChips() {
+  const p = project();
+  if (!p) return;
+  const ideas = p.edits.rules.length
+    ? ["再短一点", "撤销", "导出"]
+    : ["保留最精彩的部分", "去掉片头和片尾", "控制在 3 分钟以内", "只保留有人说话的部分"];
+  $("#chips").replaceChildren(
+    ...ideas.map((t) => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.textContent = t;
+      b.onclick = () => send(t);
+      return b;
+    }),
+  );
+}
+
+function renderBusy() {
+  const on = busy !== "";
+  for (const id of ["#open", "#undo", "#export", "#analyze"]) $<HTMLButtonElement>(id).disabled = on;
+  $<HTMLButtonElement>("#composer button").disabled = on;
+  $("#progress").hidden = !on;
+  if (!on) setProgress(0, 0, "");
+}
+
+function setProgress(done: number, total: number, label: string) {
+  $<HTMLDivElement>(".progress .bar div").style.width = total ? `${(done / total) * 100}%` : busy ? "100%" : "0";
+  $("#progress-label").textContent = label;
+}
+
+// ---- long operations ----
+
+let frame = 0;
+function onEvent(e: Event, started: number) {
+  const p = project();
+  if (e.kind === "status" && e.text) {
+    pendingText = e.text;
+    renderMessages(pendingText);
+    setProgress(0, 0, e.text.split("\n").pop()!);
+  }
+  if (e.kind === "analyze" && p) {
+    if (e.segment) p.segments[e.segment.index] = { ...e.segment, kept: p.segments[e.segment.index]?.kept ?? false };
+    const secs = (performance.now() - started) / 1000;
+    const eta = e.done ? Math.round((secs / e.done) * (e.total - e.done)) : 0;
+    setProgress(e.done, e.total, `分析 ${e.done}/${e.total} 段` + (eta && e.done < e.total ? ` · 还需约 ${clock(eta)}` : ""));
+    cancelAnimationFrame(frame);
+    frame = requestAnimationFrame(renderTimeline);
+  }
+  if (e.kind === "export") setProgress(e.done, e.total, `导出 ${e.done}/${e.total} 个片段`);
+}
+
+async function run<T>(kind: typeof busy, fn: (ch: Channel<Event>) => Promise<T>): Promise<T | undefined> {
+  if (busy) {
+    toast("请等当前操作完成");
+    return undefined;
+  }
+  busy = kind;
+  const started = performance.now();
+  running = new Channel<Event>((e) => onEvent(e, started));
+  renderBusy();
+  setProgress(0, 0, kind === "export" ? "准备导出…" : "处理中…");
+  try {
+    return await fn(running);
+  } catch (err) {
+    toast(message(err), true);
+    return undefined;
+  } finally {
+    busy = "";
+    running = null;
+    pendingText = "";
+    renderBusy();
+  }
+}
+
+$("#stop").onclick = () => running?.close();
+
+async function send(text: string) {
+  const p = project();
+  text = text.trim();
+  if (!p || !text) return;
+  if (busy) return toast("请等当前操作完成");
+  $<HTMLTextAreaElement>("#input").value = "";
+  p.chat = [...(p.chat ?? []), { role: "user", text, at: new Date().toISOString() }];
+  renderMessages("…");
+  const res = await run("chat", (ch) => Studio.chat(p.id, text, ch));
+  if (res?.view) setView(res.view);
+  else if (view) setView(await attempt(() => Studio.open(p.id)));
+  if (res?.export) exportVideo();
+}
+
+$("#composer").addEventListener("submit", (e) => {
+  e.preventDefault();
+  send($<HTMLTextAreaElement>("#input").value);
+});
+$("#input").addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
+    e.preventDefault();
+    send($<HTMLTextAreaElement>("#input").value);
+  }
+});
+
+$("#analyze").onclick = async () => {
+  const p = project();
+  if (!p) return;
+  const v = await run("analyze", (ch) => Studio.analyze(p.id, ch));
+  if (v) {
+    setView(v);
+    toast(`已挑出 ${v.summary.clips} 个片段，成片 ${clock(v.summary.keptSeconds)}`);
+  } else setView(await attempt(() => Studio.open(p.id)));
+};
+
+$("#undo").onclick = undo;
+async function undo() {
+  const p = project();
+  if (!p || busy) return;
+  const v = await attempt(() => Studio.undo(p.id));
+  if (v) setView(v);
+}
+document.addEventListener("keydown", (e) => {
+  if ((e.metaKey || e.ctrlKey) && e.key === "z" && document.activeElement?.tagName !== "TEXTAREA" && document.activeElement?.tagName !== "INPUT") {
+    e.preventDefault();
+    undo();
+  }
+});
+
+$("#export").onclick = exportVideo;
+async function exportVideo() {
+  const p = project();
+  if (!p) return;
+  if (!view?.ranges.length) return toast("还没有要保留的片段", true);
+  const r = await run("export", (ch) => Studio.export(p.id, ch));
+  if (!r) return;
+  lastExport = r;
+  $("#result").hidden = false;
+  const out = $<HTMLVideoElement>("#out-video");
+  out.src = r.mediaUrl;
+  $("#out-meta").textContent = `${clock(r.duration)} · ${mb(r.size)} · ${r.path}`;
+  $("#result").scrollIntoView({ behavior: "smooth" });
+  toast("导出完成");
+  setView(await attempt(() => Studio.open(p.id)));
+}
+$("#reveal").onclick = () => lastExport && Studio.reveal(lastExport.path);
+
+// ---- preview: play only the kept ranges ----
+
+const video = $<HTMLVideoElement>("#video");
+video.addEventListener("timeupdate", () => {
+  const p = project();
+  if (!p) return;
+  $("#playhead").style.left = `${(video.currentTime / p.source.duration) * 100}%`;
+  if (!$<HTMLInputElement>("#preview").checked || video.paused || !view) return;
+  const t = video.currentTime;
+  const ranges: Range[] = view.ranges;
+  if (ranges.some((r) => t >= r.start && t < r.end - 0.05)) return;
+  const next = ranges.find((r) => r.start > t);
+  if (next) video.currentTime = next.start;
+  else video.pause();
+});
+$("#preview").addEventListener("change", () => {
+  const first = view?.ranges[0];
+  if ($<HTMLInputElement>("#preview").checked && first) {
+    video.currentTime = first.start;
+    video.play();
+  }
+});
+
+// ---- settings ----
+
+async function renderConnection() {
+  const s = await attempt(() => Studio.getSettings());
+  if (!s) return;
+  const text = s.connected ? `已连接 Cloudflare（${s.connection}）` : s.connection;
+  for (const id of ["#connection", "#home-status"]) {
+    $(id).textContent = s.ffmpeg ? s.ffmpeg : text;
+    $(id).classList.toggle("bad", !s.connected || !!s.ffmpeg);
+  }
+  return s;
+}
+
+$("#settings-btn").onclick = async () => {
+  const s = await renderConnection();
+  if (!s) return;
+  $<HTMLInputElement>("#s-account").value = s.accountId;
+  $<HTMLInputElement>("#s-token").value = "";
+  $<HTMLInputElement>("#s-token").placeholder = s.hasToken ? "已保存（留空则不修改）" : "粘贴 API Token";
+  $<HTMLInputElement>("#s-clear").checked = false;
+  $<HTMLSelectElement>("#s-concurrency").value = String(s.concurrency);
+  $<HTMLSelectElement>("#s-quality").value = s.quality;
+  $("#conn-status").textContent = s.connected ? `当前通过 ${s.connection} 连接` : s.connection;
+  const ff = $("#ffmpeg-status");
+  ff.textContent = s.ffmpeg || "ffmpeg 已就绪";
+  ff.classList.toggle("bad", !!s.ffmpeg);
+  $<HTMLDialogElement>("#settings").showModal();
+};
+
+$<HTMLDialogElement>("#settings").addEventListener("close", async () => {
+  if ($<HTMLDialogElement>("#settings").returnValue !== "save") return;
+  const s = await attempt(() =>
+    Studio.saveSettings(
+      $<HTMLInputElement>("#s-account").value,
+      $<HTMLInputElement>("#s-token").value,
+      $<HTMLInputElement>("#s-clear").checked,
+      Number($<HTMLSelectElement>("#s-concurrency").value),
+      $<HTMLSelectElement>("#s-quality").value as Quality,
+    ),
+  );
+  $<HTMLInputElement>("#s-token").value = "";
+  if (s) {
+    toast(s.connected ? "设置已保存" : `设置已保存，但还连不上：${s.connection}`, !s.connected);
+    renderConnection();
+  }
+});
+
+// ---- automation hooks (used by the self-test) ----
+
+declare global {
+  interface Window {
+    flashcut: {
+      projectId(): string;
+      busy(): boolean;
+      send(text: string): void;
+      lastReply(): string;
+      selectFirstKept(): void;
+    };
+  }
+}
+window.flashcut = {
+  projectId: () => project()?.id ?? "",
+  busy: () => busy !== "",
+  send: (text) => void send(text),
+  lastReply: () => [...(project()?.chat ?? [])].reverse().find((m) => m.role === "assistant")?.text ?? "",
+  selectFirstKept: () => {
+    const s = project()?.segments.find((s) => s.kept);
+    if (s) selectSegment(s.index, true);
+  },
+};
+
+// ---- start ----
+
+const initial = await attempt(() => Studio.initial());
+if (initial) openView(initial);
+else showHome();

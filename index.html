@@ -3,102 +3,152 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>LoL 高光剪辑</title>
+    <title>闪剪</title>
     <link rel="stylesheet" href="./src/style.css" />
   </head>
   <body>
     <header>
       <div class="brand">
-        <span class="logo">⚔</span>
+        <span class="logo">⚡</span>
         <div>
-          <h1>LoL 高光剪辑</h1>
-          <p class="muted">Clef-omni 逐段判定 · ffmpeg 自动剪辑</p>
+          <h1>闪剪</h1>
+          <p id="project-name" class="muted">说一句话，剪好一条视频</p>
         </div>
       </div>
-      <button id="pick" class="primary">选择比赛视频</button>
+      <div class="actions">
+        <button id="open">打开视频</button>
+        <button id="undo" hidden title="撤销 (⌘Z)">撤销</button>
+        <button id="settings-btn" title="设置">设置</button>
+        <button id="export" class="primary" hidden>导出成片</button>
+      </div>
     </header>
 
-    <section id="empty" class="empty">
-      <p>选择一场英雄联盟比赛录像，应用会把它切成小段，交给 Clef-omni（Jev 兼容的决策模型）逐段判断要不要保留，再用 ffmpeg 拼出精彩集锦。</p>
+    <section id="home" class="home">
+      <div class="hero">
+        <div class="hero-icon">⚡</div>
+        <h2>把长视频剪成精华</h2>
+        <p class="muted">打开任意视频，用一句话说出要求：“只保留进球”“去掉片头广告”“控制在 3 分钟”。闪剪会逐段看完视频，按你的要求挑出片段，再一键导出。</p>
+        <button id="open-big" class="primary big">打开视频</button>
+        <p id="home-status" class="status-line"></p>
+      </div>
+      <div id="recent" class="recent"></div>
     </section>
 
     <main id="workspace" hidden>
-      <section class="card source">
-        <div class="source-meta">
-          <div>
-            <div id="src-name" class="filename"></div>
-            <div id="src-meta" class="muted"></div>
-          </div>
-          <div class="actions">
-            <button id="analyze" class="primary">开始分析</button>
-            <button id="cancel" hidden>停止</button>
+      <section class="editor">
+        <div class="card player-card">
+          <video id="video" controls preload="metadata"></video>
+          <div class="player-bar">
+            <label class="check"><input id="preview" type="checkbox" /> 只看成片（跳过被剪掉的部分）</label>
+            <span id="summary" class="muted"></span>
           </div>
         </div>
-        <div class="options">
-          <label>
-            每段长度
-            <select id="opt-seg">
-              <option value="10">10 秒</option>
-              <option value="15">15 秒</option>
-              <option value="20">20 秒</option>
-              <option value="30">30 秒</option>
-            </select>
-          </label>
-          <label>
-            保留概率 ≥ <b id="opt-keep-v"></b>
-            <input id="opt-keep" type="range" min="0.5" max="1.01" step="0.01" />
-          </label>
-          <label>
-            精彩分 ≥ <b id="opt-score-v"></b>
-            <input id="opt-score" type="range" min="1" max="4.01" step="0.05" />
-          </label>
-          <label>
-            击杀概率 ≥ <b id="opt-kill-v"></b>
-            <input id="opt-kill" type="range" min="0.2" max="1.01" step="0.01" />
-          </label>
-          <label class="check"><input id="opt-opening" type="checkbox" /> 保留开局</label>
-          <label class="check"><input id="opt-ending" type="checkbox" /> 保留结尾</label>
-          <label class="check"><input id="opt-fill" type="checkbox" /> 补齐两段之间的单个空隙</label>
-        </div>
-        <div id="progress" class="progress" hidden><div class="bar"></div><span></span></div>
-        <p id="error" class="error" hidden></p>
-      </section>
 
-      <section class="card">
-        <div class="row">
-          <h2>时间线</h2>
-          <div id="stats" class="muted"></div>
-        </div>
-        <div id="timeline" class="timeline"></div>
-        <div class="legend muted">
-          <span><i class="sw kept"></i>保留</span>
-          <span><i class="sw dropped"></i>丢弃</span>
-          <span><i class="sw failed"></i>失败</span>
-          <span><i class="sw dot"></i>有击杀</span>
-          <span>柱高 = 精彩分（0–4）。点击一段预览，再点一次切换保留/丢弃。</span>
-        </div>
-        <div id="detail" class="detail muted">悬停或点击某一段查看模型判定。</div>
-      </section>
-
-      <section class="players">
-        <div class="card">
-          <div class="row"><h2>原视频</h2></div>
-          <video id="src-video" controls preload="metadata"></video>
-        </div>
         <div class="card">
           <div class="row">
-            <h2>精彩集锦</h2>
-            <div class="actions">
-              <button id="render" class="primary" disabled>生成集锦</button>
-              <button id="reveal" hidden>在 Finder 中显示</button>
+            <h3>时间线</h3>
+            <div class="legend muted">
+              <span><i class="sw kept"></i>保留</span>
+              <span><i class="sw dropped"></i>剪掉</span>
+              <span><i class="sw pending"></i>待分析</span>
+              <span><i class="sw failed"></i>失败</span>
+              <span>柱高 = 精彩程度</span>
             </div>
           </div>
-          <video id="out-video" controls preload="metadata" hidden></video>
-          <div id="out-empty" class="placeholder muted">分析完成后点击“生成集锦”。</div>
+          <div id="timeline" class="timeline"><div id="playhead" class="playhead"></div></div>
+          <div id="ranges-bar" class="ranges-bar"></div>
+          <div id="detail" class="detail muted">点击时间线上的一段可以跳转预览，并手动保留或剪掉。</div>
+          <div id="seg-actions" class="seg-actions" hidden>
+            <button data-mode="keep">保留这段</button>
+            <button data-mode="drop">剪掉这段</button>
+            <button data-mode="auto">交给 AI</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="row"><h3>剪辑要求</h3><button id="analyze" class="small">智能剪辑</button></div>
+          <div id="rules" class="rules"></div>
+          <div class="options">
+            <label id="interest-opt">
+              精彩程度 ≥ <b id="interest-v"></b>
+              <input id="interest" type="range" min="0.5" max="4" step="0.1" />
+            </label>
+            <label>
+              时长上限
+              <input id="target" type="number" min="0" step="10" placeholder="不限" /> 秒
+            </label>
+            <label>
+              片段前后多留
+              <select id="pad"><option value="0">0 秒</option><option value="1">1 秒</option><option value="2">2 秒</option><option value="4">4 秒</option></select>
+            </label>
+            <label class="check"><input id="fill" type="checkbox" /> 补齐片段间的小空隙</label>
+          </div>
+        </div>
+
+        <div id="result" class="card result" hidden>
+          <div class="row">
+            <h3>已导出</h3>
+            <div class="actions"><button id="reveal" class="small">在 Finder 中显示</button></div>
+          </div>
+          <video id="out-video" controls preload="metadata"></video>
           <div id="out-meta" class="muted"></div>
         </div>
       </section>
+
+      <aside class="chat card">
+        <div class="chat-head">
+          <h3>聊天剪辑</h3>
+          <span id="connection" class="muted"></span>
+        </div>
+        <div id="messages" class="messages"></div>
+        <div id="progress" class="progress" hidden>
+          <div class="progress-text"><span id="progress-label"></span><button id="stop" class="link">停止</button></div>
+          <div class="bar"><div></div></div>
+        </div>
+        <div id="chips" class="chips"></div>
+        <form id="composer" class="composer">
+          <textarea id="input" rows="2" placeholder="说说想怎么剪，例如：只保留击杀和团战，控制在 5 分钟以内"></textarea>
+          <button class="primary" type="submit">发送</button>
+        </form>
+      </aside>
     </main>
+
+    <div id="toast" class="toast" hidden></div>
+
+    <dialog id="settings">
+      <form method="dialog" class="settings-form">
+        <h3>设置</h3>
+        <fieldset>
+          <legend>Cloudflare 连接</legend>
+          <p id="conn-status" class="muted"></p>
+          <label>Account ID <input id="s-account" autocomplete="off" spellcheck="false" /></label>
+          <label>API Token <input id="s-token" type="password" autocomplete="off" spellcheck="false" /></label>
+          <label class="check"><input id="s-clear" type="checkbox" /> 清除已保存的凭证，改用已登录的 cf 命令行</label>
+          <p class="hint muted">需要 Workers AI 权限。不填时使用本机已登录的 <code>cf</code> 命令行（<code>cf auth login</code>）。凭证只保存在本机。</p>
+        </fieldset>
+        <fieldset>
+          <legend>分析与导出</legend>
+          <label>同时分析
+            <select id="s-concurrency">
+              <option value="2">2 段</option><option value="4">4 段</option><option value="6">6 段</option><option value="8">8 段</option>
+            </select>
+          </label>
+          <label>导出画质
+            <select id="s-quality">
+              <option value="high">高（文件大）</option>
+              <option value="medium">标准</option>
+              <option value="small">小（最高 720p，方便分享）</option>
+            </select>
+          </label>
+          <p id="ffmpeg-status" class="hint"></p>
+        </fieldset>
+        <div class="actions end">
+          <button value="cancel">取消</button>
+          <button id="s-save" class="primary" value="save">保存</button>
+        </div>
+      </form>
+    </dialog>
+
     <script type="module" src="./src/main.ts"></script>
   </body>
 </html>

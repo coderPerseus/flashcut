@@ -1,8 +1,8 @@
 import { defineConfig } from "mygo-cli";
 
 export default defineConfig({
-  name: "LoL Highlights",
-  identifier: "app.lolhighlights.desktop",
+  name: "闪剪",
+  identifier: "app.flashcut.desktop",
   version: "0.1.0",
   // `mygo dev` runs devCommand and loads devUrl; `mygo build` runs
   // buildCommand and embeds frontendDist into the app.

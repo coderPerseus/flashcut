@@ -4,81 +4,131 @@ import { call, type Channel } from "mygo-runtime";
 
 // ---- Types ----
 
-export interface Options {
-  segmentSeconds: number;
-  concurrency: number;
-  keepThreshold: number;
-  scoreThreshold: number;
-  killThreshold: number;
-  keepOpening: boolean;
-  keepEnding: boolean;
-  fillGaps: boolean;
+/** ChatResult is the outcome of one chat message. */
+export interface ChatResult {
+  view: View | null;
+  /** Export is true when the user asked to export; the page then runs it. */
+  export: boolean;
 }
 
-export interface Progress {
+export interface Edits {
+  rules: Rule[];
+  ranges: RangeRule[];
+  targetSeconds: number;
+  interestThreshold: number;
+  overrides: Record<number, boolean>;
+  fillGaps: boolean;
+  padSeconds: number;
+}
+
+/** Event reports progress of a long operation. */
+export interface Event {
+  /** Kind is "analyze", "export" or "status". */
+  kind: string;
   done: number;
   total: number;
   segment?: Segment;
+  text?: string;
 }
 
-/** Project is the state of one source video as the page shows it. */
-export interface Project {
-  source: VideoInfo;
-  mediaUrl: string;
-  segments: Segment[];
-  ranges: Range[];
-  stats: Stats;
-  options: Options;
-  judge: string;
-}
-
-export interface Range {
-  start: number;
-  end: number;
-}
-
-/** RenderProgress reports cut parts as they finish. */
-export interface RenderProgress {
-  done: number;
-  total: number;
-}
-
-/** RenderResult is the finished highlight reel. */
-export interface RenderResult {
+/** ExportResult is a finished export. */
+export interface ExportResult {
   path: string;
   mediaUrl: string;
   duration: number;
   size: number;
 }
 
+export interface Message {
+  role: string;
+  text: string;
+  at: string;
+}
+
+export type Mode = string;
+
+export interface Project {
+  id: string;
+  version: number;
+  source: VideoInfo;
+  segmentSeconds: number;
+  edits: Edits;
+  segments: Segment[];
+  chat: Message[];
+  history: Edits[];
+  tokens: number;
+  nextRuleId: number;
+  updatedAt: string;
+}
+
+export type Quality = string;
+
+export interface Range {
+  start: number;
+  end: number;
+}
+
+export interface RangeRule {
+  start: number;
+  end: number;
+  keep: boolean;
+}
+
+/** RecentProject is a saved project in the start screen list. */
+export interface RecentProject {
+  id: string;
+  name: string;
+  path: string;
+  duration: number;
+  keptSeconds: number;
+  missing: boolean;
+  updatedAt: string;
+}
+
+export interface Rule {
+  id: string;
+  text: string;
+  mode: Mode;
+  threshold: number;
+  enabled: boolean;
+  createdAt: string;
+}
+
 export interface Segment {
   index: number;
   start: number;
   end: number;
-  verdict: Verdict | null;
+  answers: Record<string, number>;
   error?: string;
   kept: boolean;
+  reason: string;
 }
 
-export interface Stats {
+/**
+ * Settings are the app preferences as the page sees them. The API token
+ * itself never leaves Go.
+ */
+export interface Settings {
+  accountId: string;
+  hasToken: boolean;
+  concurrency: number;
+  quality: Quality;
+  /** Connection says how Clef is reached, or why it cannot be. */
+  connection: string;
+  connected: boolean;
+  ffmpeg: string;
+}
+
+export interface Summary {
   segments: number;
-  kept: number;
+  analyzed: number;
   failed: number;
+  keptSegments: number;
   keptSeconds: number;
-  totalSeconds: number;
+  clips: number;
   tokens: number;
-  scenes: Record<string, number>;
-}
-
-export interface Verdict {
-  keep: number;
-  score: number;
-  kill: number;
-  opening: number;
-  ending: number;
-  scene: string;
-  sceneProbs: Record<string, number>;
-  tokens: number;
+  costUsd: number;
+  pendingTokens: number;
 }
 
 export interface VideoInfo {
@@ -90,64 +140,110 @@ export interface VideoInfo {
   hasAudio: boolean;
 }
 
+/** View is a project as the page shows it. */
+export interface View {
+  project: Project | null;
+  mediaUrl: string;
+  summary: Summary;
+  ranges: Range[];
+}
+
 // ---- Services ----
 
 /**
- * Studio turns a full match video into a highlight reel: it splits the video
- * into segments, asks Clef-omni whether each is worth keeping, and joins the
- * kept ones with ffmpeg.
+ * Studio is the FlashCut backend: it opens videos as projects, analyzes
+ * them with Clef-omni, edits them from chat or controls, and exports them.
  */
 export const Studio = {
   /**
-   * Analyze judges every segment of the video, streaming each verdict to
-   * progress, then selects segments with opts. Segments judged in an earlier
-   * run with the same segment length are reused.
+   * Analyze asks the model about every segment that has unanswered
+   * questions, streaming progress, then reselects.
    */
-  analyze(path: string, opts: Options, progress: Channel<Progress>): Promise<Project | null> {
-    return call("Studio.Analyze", path, opts, progress);
-  },
-  /** Defaults returns the default analysis options. */
-  defaults(): Promise<Options> {
-    return call("Studio.Defaults");
+  analyze(id: string, events: Channel<Event>): Promise<View | null> {
+    return call("Studio.Analyze", id, events);
   },
   /**
-   * Initial opens the video named by LOL_HIGHLIGHTS_OPEN, if set, so the app
-   * can be started on a file from the command line. It returns null otherwise.
+   * Chat applies a chat message: Clef-flash works out what the user wants,
+   * the edits change, and new content rules are analyzed.
    */
-  initial(): Promise<Project | null> {
+  chat(id: string, message: string, events: Channel<Event>): Promise<ChatResult | null> {
+    return call("Studio.Chat", id, message, events);
+  },
+  /** DeleteRange removes a time-range rule by position. */
+  deleteRange(id: string, index: number): Promise<View | null> {
+    return call("Studio.DeleteRange", id, index);
+  },
+  /** DeleteRule removes a content rule. */
+  deleteRule(id: string, ruleID: string): Promise<View | null> {
+    return call("Studio.DeleteRule", id, ruleID);
+  },
+  /** Export asks where to save, then cuts and joins the selection. */
+  export(id: string, events: Channel<Event>): Promise<ExportResult | null> {
+    return call("Studio.Export", id, events);
+  },
+  /** Forget removes a project from the recent list. The video is untouched. */
+  forget(id: string): Promise<void> {
+    return call("Studio.Forget", id);
+  },
+  /**
+   * GetSettings returns the preferences and checks that ffmpeg and Clef are
+   * reachable.
+   */
+  getSettings(): Promise<Settings> {
+    return call("Studio.GetSettings");
+  },
+  /**
+   * Initial opens the video named by FLASHCUT_OPEN, if set, so the app can be
+   * started on a file from the command line. It returns null otherwise.
+   */
+  initial(): Promise<View | null> {
     return call("Studio.Initial");
   },
-  /** Open loads a video by path, with any earlier analysis of it. */
-  open(path: string): Promise<Project | null> {
-    return call("Studio.Open", path);
+  /** Open opens a saved project. */
+  open(id: string): Promise<View | null> {
+    return call("Studio.Open", id);
   },
-  /**
-   * PickVideo asks for a match video and returns it, with any earlier
-   * analysis of it. It returns null when the dialog is canceled.
-   */
-  pickVideo(): Promise<Project | null> {
+  /** OpenPath opens a video by path, resuming its project if one exists. */
+  openPath(path: string): Promise<View | null> {
+    return call("Studio.OpenPath", path);
+  },
+  /** PickVideo asks for a video and opens it. It returns null when canceled. */
+  pickVideo(): Promise<View | null> {
     return call("Studio.PickVideo");
   },
-  /**
-   * Render cuts the kept segments from the source and joins them into
-   * "<name>-highlights.mp4" in ~/Movies/LoL Highlights.
-   */
-  render(path: string, progress: Channel<RenderProgress>): Promise<RenderResult | null> {
-    return call("Studio.Render", path, progress);
-  },
-  /**
-   * Reselect applies new thresholds to the saved analysis without calling the
-   * model again. Manual changes are replaced.
-   */
-  reselect(path: string, opts: Options): Promise<Project | null> {
-    return call("Studio.Reselect", path, opts);
+  /** Recent lists recently edited videos. */
+  recent(): Promise<RecentProject[]> {
+    return call("Studio.Recent");
   },
   /** Reveal shows a file in Finder. */
   reveal(path: string): Promise<void> {
     return call("Studio.Reveal", path);
   },
-  /** SetKept keeps or drops one segment by hand. */
-  setKept(path: string, index: number, kept: boolean, opts: Options): Promise<Project | null> {
-    return call("Studio.SetKept", path, index, kept, opts);
+  /**
+   * SaveSettings stores the preferences. An empty apiToken keeps the saved
+   * one; clear removes the saved credentials so the cf CLI is used.
+   */
+  saveSettings(accountID: string, apiToken: string, clear: boolean, concurrency: number, quality: Quality): Promise<Settings> {
+    return call("Studio.SaveSettings", accountID, apiToken, clear, concurrency, quality);
+  },
+  /**
+   * SetOptions changes the automatic selection: the interest level used when
+   * there are no keep rules, the length cap (0 for none), gap filling and the
+   * seconds added around each clip.
+   */
+  setOptions(id: string, interestThreshold: number, targetSeconds: number, fillGaps: boolean, padSeconds: number): Promise<View | null> {
+    return call("Studio.SetOptions", id, interestThreshold, targetSeconds, fillGaps, padSeconds);
+  },
+  /** SetOverride keeps ("keep"), drops ("drop") or un-pins ("auto") a segment. */
+  setOverride(id: string, index: number, mode: string): Promise<View | null> {
+    return call("Studio.SetOverride", id, index, mode);
+  },
+  /** SetRule enables, disables or retunes a content rule. */
+  setRule(id: string, ruleID: string, enabled: boolean, threshold: number): Promise<View | null> {
+    return call("Studio.SetRule", id, ruleID, enabled, threshold);
+  },
+  /** Undo reverts the last edit. */
+  undo(id: string): Promise<View | null> {
+    return call("Studio.Undo", id);
   },
 } as const;

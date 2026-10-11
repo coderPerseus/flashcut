@@ -1,0 +1,252 @@
+// Package clef calls Cloudflare's Clef decision models (API-compatible with
+// TypeSafe's Jev): a state plus typed questions in, calibrated answers out.
+package clef
+
+import (
+	"bytes"
+	"context"
+	"encoding/base64"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"time"
+)
+
+// Models.
+const (
+	// Omni judges video with its soundtrack.
+	Omni = "@cf/cloudflare/clef-omni"
+	// Flash is the fast, cheap text model used to understand chat.
+	Flash = "@cf/cloudflare/clef-flash"
+)
+
+// PricePerMTok is the input price in US dollars per million tokens.
+var PricePerMTok = map[string]float64{Omni: 0.15, Flash: 0.038}
+
+// Question is a typed question. Use Noul, Choice or Score to build one.
+type Question struct {
+	Type         string `json:"type"`
+	Instructions any    `json:"instructions"`
+	Criteria     any    `json:"criteria,omitempty"`
+}
+
+// Noul asks a yes/no question; the answer is the probability of yes.
+func Noul(instructions string, yes, no string) Question {
+	q := Question{Type: "noul", Instructions: instructions}
+	if yes != "" || no != "" {
+		q.Criteria = map[string]string{"true": yes, "false": no}
+	}
+	return q
+}
+
+// Score rates on ordered levels, lowest first.
+func Score(instructions string, levels ...string) Question {
+	return Question{Type: "score", Instructions: instructions, Criteria: levels}
+}
+
+// Request is one model call.
+type Request struct {
+	State     any                 `json:"state"`
+	Questions map[string]Question `json:"questions"`
+	// Videos are MP4 files (at most 2, 16 MiB and 60 s each; Omni only).
+	Videos [][]byte `json:"-"`
+}
+
+// Answer is one answer. Value is the yes probability for noul, the
+// weighted level for score, and the chosen option's probability for choice.
+type Answer struct {
+	Type          string             `json:"type"`
+	Noul          float64            `json:"noul"`
+	Score         float64            `json:"score"`
+	Choice        string             `json:"choice"`
+	Probabilities map[string]float64 `json:"probabilities"`
+}
+
+// Response is the model output.
+type Response struct {
+	Answers map[string]Answer `json:"answers"`
+	Usage   struct {
+		InputTokens int `json:"input_tokens"`
+	} `json:"usage"`
+}
+
+// Config holds Cloudflare credentials. When AccountID and APIToken are
+// empty the signed-in `cf` CLI is used instead.
+type Config struct {
+	AccountID string `json:"accountId"`
+	APIToken  string `json:"apiToken"`
+}
+
+// Client runs Clef models.
+type Client struct {
+	cfg  Config
+	cf   string
+	http *http.Client
+}
+
+// New returns a client for cfg, or an error saying how to sign in.
+func New(cfg Config) (*Client, error) {
+	c := &Client{cfg: cfg, http: &http.Client{Timeout: 3 * time.Minute}}
+	if cfg.AccountID != "" && cfg.APIToken != "" {
+		return c, nil
+	}
+	cf, err := LookCF()
+	if err != nil {
+		return nil, errors.New("还没有 Cloudflare 凭证：在设置里填入 Account ID 和 API Token，或者在终端运行 `cf auth login`")
+	}
+	c.cf = cf
+	return c, nil
+}
+
+// Name says how the client reaches Cloudflare.
+func (c *Client) Name() string {
+	if c.cf != "" {
+		return "cf CLI"
+	}
+	return "API Token"
+}
+
+// Run calls model with req, retrying rate limits and server errors.
+func (c *Client) Run(ctx context.Context, model string, req Request) (*Response, error) {
+	body := map[string]any{
+		"model":     strings.TrimPrefix(model, "@cf/cloudflare/"),
+		"state":     req.State,
+		"questions": req.Questions,
+	}
+	if len(req.Videos) > 0 {
+		var vids []string
+		for _, v := range req.Videos {
+			vids = append(vids, "data:video/mp4;base64,"+base64.StdEncoding.EncodeToString(v))
+		}
+		body["videos"] = vids
+	}
+	payload, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	var lastErr error
+	for attempt := range 4 {
+		var out []byte
+		var retry bool
+		if c.cf != "" {
+			out, retry, err = c.runCLI(ctx, model, payload)
+		} else {
+			out, retry, err = c.runREST(ctx, model, payload)
+		}
+		if err == nil {
+			return parse(out)
+		}
+		lastErr = err
+		if !retry || ctx.Err() != nil {
+			break
+		}
+		select {
+		case <-time.After(time.Duration(2<<attempt) * time.Second):
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+	return nil, lastErr
+}
+
+func (c *Client) runREST(ctx context.Context, model string, payload []byte) ([]byte, bool, error) {
+	url := fmt.Sprintf("https://api.cloudflare.com/client/v4/accounts/%s/ai/run/%s", c.cfg.AccountID, model)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
+	if err != nil {
+		return nil, false, err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.cfg.APIToken)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, true, err
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	switch {
+	case resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500:
+		return nil, true, fmt.Errorf("Cloudflare 返回 HTTP %d", resp.StatusCode)
+	case resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden:
+		return nil, false, fmt.Errorf("Cloudflare 拒绝了凭证（HTTP %d），请检查 Account ID 和 API Token 是否有 Workers AI 权限", resp.StatusCode)
+	}
+	return body, false, nil
+}
+
+func (c *Client) runCLI(ctx context.Context, model string, payload []byte) ([]byte, bool, error) {
+	dir, err := os.MkdirTemp("", "flashcut-")
+	if err != nil {
+		return nil, false, err
+	}
+	defer os.RemoveAll(dir)
+	file := filepath.Join(dir, "body.json")
+	if err := os.WriteFile(file, payload, 0o600); err != nil {
+		return nil, false, err
+	}
+	var stdout, stderr bytes.Buffer
+	cmd := exec.CommandContext(ctx, c.cf, "ai", "run", model, "--body", "@"+file)
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	// Apps start in "/" with a minimal PATH; cf is a Node script and keeps a
+	// cache in its working directory.
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "PATH="+filepath.Dir(c.cf)+":"+os.Getenv("PATH")+":/opt/homebrew/bin:/usr/local/bin")
+	if err := cmd.Run(); err != nil {
+		msg := strings.TrimSpace(stderr.String() + stdout.String())
+		if len(msg) > 300 {
+			msg = msg[:300]
+		}
+		return nil, true, fmt.Errorf("cf ai run: %w: %s", err, msg)
+	}
+	return stdout.Bytes(), false, nil
+}
+
+func parse(body []byte) (*Response, error) {
+	// The REST API wraps the output in {"result": ..., "success": ...}; the
+	// cf CLI prints it bare.
+	var env struct {
+		Result  json.RawMessage `json:"result"`
+		Success *bool           `json:"success"`
+		Errors  []struct {
+			Message string `json:"message"`
+		} `json:"errors"`
+	}
+	if json.Unmarshal(body, &env) == nil && env.Success != nil {
+		if !*env.Success || len(env.Result) == 0 {
+			var msgs []string
+			for _, e := range env.Errors {
+				msgs = append(msgs, e.Message)
+			}
+			return nil, fmt.Errorf("Clef: %s", strings.Join(msgs, "; "))
+		}
+		body = env.Result
+	}
+	var r Response
+	if err := json.Unmarshal(body, &r); err != nil || len(r.Answers) == 0 {
+		return nil, fmt.Errorf("Clef 返回了无法识别的结果: %.200s", body)
+	}
+	return &r, nil
+}
+
+// LookCF finds the cf CLI on PATH or in npm global installs under nvm.
+func LookCF() (string, error) {
+	if p, err := exec.LookPath("cf"); err == nil {
+		return p, nil
+	}
+	home, _ := os.UserHomeDir()
+	for _, pattern := range []string{
+		"/opt/homebrew/bin/cf", "/usr/local/bin/cf",
+		filepath.Join(home, ".nvm/versions/node/*/bin/cf"),
+		filepath.Join(home, ".local/share/pnpm/cf"),
+		filepath.Join(home, ".bun/bin/cf"),
+	} {
+		if m, _ := filepath.Glob(pattern); len(m) > 0 {
+			return m[len(m)-1], nil
+		}
+	}
+	return "", errors.New("cf not found")
+}

@@ -1,4 +1,4 @@
-module lol-highlights
+module flashcut
 
 go 1.27.1
 

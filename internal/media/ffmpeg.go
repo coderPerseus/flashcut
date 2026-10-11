@@ -1,4 +1,4 @@
-package highlight
+package media
 
 import (
 	"bytes"
@@ -27,7 +27,7 @@ func LookTool(name string) (string, error) {
 			return p, nil
 		}
 	}
-	return "", fmt.Errorf("%s not found; install it (e.g. brew install ffmpeg)", name)
+	return "", fmt.Errorf("没有找到 %s，请先安装 ffmpeg（brew install ffmpeg）", name)
 }
 
 // VideoInfo describes a source video.
@@ -96,7 +96,7 @@ func ExtractPreview(ctx context.Context, src, dst string, start, dur float64) er
 	}
 	return run(ctx, ffmpeg, "-v", "error", "-y",
 		"-ss", ftoa(start), "-t", ftoa(dur), "-i", src,
-		"-vf", "scale=-2:480,fps=4",
+		"-vf", "scale=-2:'min(480,trunc(ih/2)*2)',fps=4",
 		"-c:v", "libx264", "-preset", "veryfast", "-crf", "30",
 		"-c:a", "aac", "-ac", "1", "-b:a", "48k",
 		"-movflags", "+faststart", dst)
@@ -108,10 +108,30 @@ type Range struct {
 	End   float64 `json:"end"`
 }
 
-// Render cuts each range from src at full quality and joins them into dst.
-// Each part is re-encoded so cuts land exactly on the range boundaries.
-// progress, when set, is called after each part with (done, total).
-func Render(ctx context.Context, src, dst string, ranges []Range, progress func(done, total int)) error {
+// Quality is the export quality.
+type Quality string
+
+const (
+	QualityHigh   Quality = "high"   // near-lossless, large files
+	QualityMedium Quality = "medium" // the default
+	QualitySmall  Quality = "small"  // at most 720p, for sharing
+)
+
+func (q Quality) args() []string {
+	switch q {
+	case QualityHigh:
+		return []string{"-preset", "medium", "-crf", "18"}
+	case QualitySmall:
+		return []string{"-vf", "scale=-2:'min(720,trunc(ih/2)*2)'", "-preset", "veryfast", "-crf", "27"}
+	default:
+		return []string{"-preset", "veryfast", "-crf", "23"}
+	}
+}
+
+// Render cuts each range from src and joins them into dst. Each part is
+// re-encoded so cuts land exactly on the range boundaries. progress, when
+// set, is called after each part with (done, total).
+func Render(ctx context.Context, src, dst string, ranges []Range, q Quality, progress func(done, total int)) error {
 	if len(ranges) == 0 {
 		return fmt.Errorf("nothing to render: no segments were kept")
 	}
@@ -132,12 +152,11 @@ func Render(ctx context.Context, src, dst string, ranges []Range, progress func(
 	var list strings.Builder
 	for i, r := range ranges {
 		part := filepath.Join(tmp, fmt.Sprintf("part-%04d.mp4", i))
-		if err := run(ctx, ffmpeg, "-v", "error", "-y",
-			"-ss", ftoa(r.Start), "-t", ftoa(r.End-r.Start), "-i", src,
-			"-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
-			"-pix_fmt", "yuv420p", "-r", "30",
-			"-c:a", "aac", "-b:a", "160k", "-ar", "48000", "-ac", "2",
-			part); err != nil {
+		args := []string{"-v", "error", "-y", "-ss", ftoa(r.Start), "-t", ftoa(r.End - r.Start), "-i", src, "-c:v", "libx264"}
+		args = append(args, q.args()...)
+		args = append(args, "-pix_fmt", "yuv420p", "-r", "30",
+			"-c:a", "aac", "-b:a", "160k", "-ar", "48000", "-ac", "2", part)
+		if err := run(ctx, ffmpeg, args...); err != nil {
 			return fmt.Errorf("cut %s-%s: %w", Clock(r.Start), Clock(r.End), err)
 		}
 		fmt.Fprintf(&list, "file '%s'\n", strings.ReplaceAll(part, "'", `'\''`))
@@ -149,8 +168,14 @@ func Render(ctx context.Context, src, dst string, ranges []Range, progress func(
 	if err := os.WriteFile(listPath, []byte(list.String()), 0o644); err != nil {
 		return err
 	}
-	return run(ctx, ffmpeg, "-v", "error", "-y", "-f", "concat", "-safe", "0",
-		"-i", listPath, "-c", "copy", "-movflags", "+faststart", dst)
+	// Write next to dst and rename, so a canceled export never leaves a
+	// half-written file in place of a good one.
+	tmpOut := filepath.Join(tmp, "out.mp4")
+	if err := run(ctx, ffmpeg, "-v", "error", "-y", "-f", "concat", "-safe", "0",
+		"-i", listPath, "-c", "copy", "-movflags", "+faststart", tmpOut); err != nil {
+		return err
+	}
+	return os.Rename(tmpOut, dst)
 }
 
 func run(ctx context.Context, name string, args ...string) error {
