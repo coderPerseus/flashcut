@@ -244,6 +244,11 @@ func (j *cliJudge) Judge(ctx context.Context, video []byte, dur float64) (Verdic
 		var stdout, stderr bytes.Buffer
 		cmd := exec.CommandContext(ctx, j.cf, "ai", "run", Model, "--body", "@"+f.Name())
 		cmd.Stdout, cmd.Stderr = &stdout, &stderr
+		// cf is a Node script; apps opened from Finder get a minimal PATH,
+		// so put cf's own directory (where nvm keeps node) first.
+		// Apps start in "/", where cf cannot create its .cloudflare cache.
+		cmd.Dir = filepath.Dir(f.Name())
+		cmd.Env = append(os.Environ(), "PATH="+filepath.Dir(j.cf)+":"+os.Getenv("PATH")+":/opt/homebrew/bin:/usr/local/bin")
 		if err := cmd.Run(); err != nil {
 			return Verdict{}, true, fmt.Errorf("cf ai run: %w: %.300s", err, strings.TrimSpace(stderr.String()+stdout.String()))
 		}

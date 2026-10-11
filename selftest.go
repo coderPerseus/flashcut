@@ -26,7 +26,8 @@ func selfTest(win *mygo.Window) {
 			}
 			time.Sleep(time.Second)
 		}
-		log.Printf("selftest: timed out waiting for %s", what)
+		text, _ := mygo.EvalAs[string](page, `return location.href + " :: error=" + document.querySelector("#error").textContent + " :: " + document.body.innerText.slice(0, 200)`)
+		log.Printf("selftest: timed out waiting for %s; page: %s", what, text)
 		return false
 	}
 	report := func(step string) {

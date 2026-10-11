@@ -14,7 +14,7 @@
 ```bash
 bun install
 bun run dev        # 开发模式（Vite 端口 5188）
-bun run build      # 打包 .app / .dmg 到 build/
+bun run build      # 打包 LoL Highlights.app / .dmg 到 build/darwin-arm64/
 ```
 
 命令行版本（不开窗口，方便批量或调试）：
