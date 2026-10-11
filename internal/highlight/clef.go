@@ -27,10 +27,20 @@ type Verdict struct {
 	// Score is the excitement level, 0 (boring) to 4 (epic).
 	Score float64 `json:"score"`
 	// Scene is the most likely kind of footage, one of SceneLabels.
+	// Kill is the probability a champion is killed in the clip.
+	Kill float64 `json:"kill"`
+	// Opening is the probability the clip is the start of the game.
+	Opening float64 `json:"opening"`
+	// Ending is the probability the clip is the end of the game.
+	Ending     float64            `json:"ending"`
 	Scene      string             `json:"scene"`
 	SceneProbs map[string]float64 `json:"sceneProbs"`
 	Tokens     int                `json:"tokens"`
 }
+
+// QuestionsVersion changes whenever the questions do, so cached verdicts
+// from older questions are judged again.
+const QuestionsVersion = 2
 
 // SceneLabels describes the kinds of footage in a broadcast.
 var SceneLabels = map[string]string{
@@ -67,6 +77,30 @@ func buildRequest(video []byte, dur float64) map[string]any {
 					"false": "Draft, desk talk, ads, breaks, or quiet farming",
 				},
 			},
+			"kill": map[string]any{
+				"type":         "noul",
+				"instructions": "Is at least one champion killed in this clip (a kill announcement, a kill in the kill feed, or a champion dying on screen)?",
+				"criteria": map[string]string{
+					"true":  "A champion dies or a kill is announced, including first blood, executes and shutdowns",
+					"false": "No champion dies in this clip",
+				},
+			},
+			"opening": map[string]any{
+				"type":         "noul",
+				"instructions": "Is this the opening of the game: the in-game match has just started (game timer near 0:00, champions leaving the fountain, walking to lanes, or the broadcast transitioning from the draft into the game)?",
+				"criteria": map[string]string{
+					"true":  "The first moments of the actual game",
+					"false": "Draft, desk, or the game is already well underway",
+				},
+			},
+			"ending": map[string]any{
+				"type":         "noul",
+				"instructions": "Is this the ending of the game: the final push, the nexus exploding, or the victory or defeat screen?",
+				"criteria": map[string]string{
+					"true":  "The game is being won or has just been won",
+					"false": "The game is still going on, or this is a break or desk segment",
+				},
+			},
 			"score": map[string]any{
 				"type":         "score",
 				"instructions": "How exciting is this clip for a highlight reel?",
@@ -83,9 +117,12 @@ func buildRequest(video []byte, dur float64) map[string]any {
 
 type answers struct {
 	Answers struct {
-		Keep  struct{ Noul float64 } `json:"keep"`
-		Score struct{ Score float64 } `json:"score"`
-		Scene struct {
+		Keep    struct{ Noul float64 }  `json:"keep"`
+		Kill    struct{ Noul float64 }  `json:"kill"`
+		Opening struct{ Noul float64 }  `json:"opening"`
+		Ending  struct{ Noul float64 }  `json:"ending"`
+		Score   struct{ Score float64 } `json:"score"`
+		Scene   struct {
 			Choice        string             `json:"choice"`
 			Probabilities map[string]float64 `json:"probabilities"`
 		} `json:"scene"`
@@ -124,6 +161,9 @@ func parseVerdict(body []byte) (Verdict, error) {
 	}
 	return Verdict{
 		Keep:       a.Answers.Keep.Noul,
+		Kill:       a.Answers.Kill.Noul,
+		Opening:    a.Answers.Opening.Noul,
+		Ending:     a.Answers.Ending.Noul,
 		Score:      a.Answers.Score.Score,
 		Scene:      a.Answers.Scene.Choice,
 		SceneProbs: a.Answers.Scene.Probabilities,

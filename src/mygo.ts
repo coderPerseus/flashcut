@@ -9,6 +9,9 @@ export interface Options {
   concurrency: number;
   keepThreshold: number;
   scoreThreshold: number;
+  killThreshold: number;
+  keepOpening: boolean;
+  keepEnding: boolean;
   fillGaps: boolean;
 }
 
@@ -70,6 +73,9 @@ export interface Stats {
 export interface Verdict {
   keep: number;
   score: number;
+  kill: number;
+  opening: number;
+  ending: number;
   scene: string;
   sceneProbs: Record<string, number>;
   tokens: number;

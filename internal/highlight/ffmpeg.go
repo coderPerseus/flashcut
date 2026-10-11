@@ -87,7 +87,7 @@ func Probe(ctx context.Context, path string) (VideoInfo, error) {
 }
 
 // ExtractPreview writes a small, low-frame-rate clip of [start, start+dur)
-// for the model: 360p, 4 fps, mono audio. The model samples 2 fps, so this
+// for the model: 480p, 4 fps, mono audio. The model samples 2 fps, so this
 // keeps each request a few hundred KB instead of many MB.
 func ExtractPreview(ctx context.Context, src, dst string, start, dur float64) error {
 	ffmpeg, err := LookTool("ffmpeg")
@@ -96,7 +96,7 @@ func ExtractPreview(ctx context.Context, src, dst string, start, dur float64) er
 	}
 	return run(ctx, ffmpeg, "-v", "error", "-y",
 		"-ss", ftoa(start), "-t", ftoa(dur), "-i", src,
-		"-vf", "scale=-2:360,fps=4",
+		"-vf", "scale=-2:480,fps=4",
 		"-c:v", "libx264", "-preset", "veryfast", "-crf", "30",
 		"-c:a", "aac", "-ac", "1", "-b:a", "48k",
 		"-movflags", "+faststart", dst)

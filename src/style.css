@@ -142,12 +142,25 @@ input[type="checkbox"] { accent-color: var(--accent); }
 .seg.pending i { background: var(--line); height: 100% !important; }
 .seg.selected i { outline: 2px solid var(--fg); outline-offset: 1px; }
 .seg:hover i { filter: brightness(1.2); }
+.seg { position: relative; }
+.seg.kill::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 50%;
+  width: 5px;
+  height: 5px;
+  margin-left: -2.5px;
+  border-radius: 50%;
+  background: var(--failed);
+}
 
 .legend { display: flex; flex-wrap: wrap; gap: 16px; margin-top: 8px; font-size: 12px; }
 .sw { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px; vertical-align: -1px; }
 .sw.kept { background: var(--kept); }
 .sw.dropped { background: var(--dropped); }
 .sw.failed { background: var(--failed); }
+.sw.dot { width: 6px; height: 6px; border-radius: 50%; background: var(--failed); vertical-align: 1px; }
 
 .detail { margin-top: 10px; min-height: 20px; font-variant-numeric: tabular-nums; }
 .detail b { color: var(--fg); }

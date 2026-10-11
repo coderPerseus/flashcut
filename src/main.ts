@@ -55,7 +55,11 @@ function renderOptions() {
   $<HTMLSelectElement>("#opt-seg").value = String(options.segmentSeconds);
   $<HTMLInputElement>("#opt-keep").value = String(options.keepThreshold);
   $<HTMLInputElement>("#opt-score").value = String(options.scoreThreshold);
+  $<HTMLInputElement>("#opt-kill").value = String(options.killThreshold);
+  $<HTMLInputElement>("#opt-opening").checked = options.keepOpening;
+  $<HTMLInputElement>("#opt-ending").checked = options.keepEnding;
   $<HTMLInputElement>("#opt-fill").checked = options.fillGaps;
+  $("#opt-kill-v").textContent = options.killThreshold > 1 ? "关" : options.killThreshold.toFixed(2);
   $("#opt-keep-v").textContent = options.keepThreshold > 1 ? "关" : options.keepThreshold.toFixed(2);
   $("#opt-score-v").textContent = options.scoreThreshold > 4 ? "关" : options.scoreThreshold.toFixed(2);
 }
@@ -67,6 +71,9 @@ function onOptionsChanged() {
     segmentSeconds: Number($<HTMLSelectElement>("#opt-seg").value),
     keepThreshold: Number($<HTMLInputElement>("#opt-keep").value),
     scoreThreshold: Number($<HTMLInputElement>("#opt-score").value),
+    killThreshold: Number($<HTMLInputElement>("#opt-kill").value),
+    keepOpening: $<HTMLInputElement>("#opt-opening").checked,
+    keepEnding: $<HTMLInputElement>("#opt-ending").checked,
     fillGaps: $<HTMLInputElement>("#opt-fill").checked,
   };
   renderOptions();
@@ -82,7 +89,7 @@ function onOptionsChanged() {
     }
   }, 120);
 }
-for (const id of ["#opt-seg", "#opt-keep", "#opt-score", "#opt-fill"]) $(id).addEventListener("input", onOptionsChanged);
+for (const id of ["#opt-seg", "#opt-keep", "#opt-score", "#opt-kill", "#opt-opening", "#opt-ending", "#opt-fill"]) $(id).addEventListener("input", onOptionsChanged);
 
 // ---- project ----
 
@@ -130,6 +137,7 @@ function renderTimeline() {
       if (s.verdict) {
         bar.style.height = `${Math.max(3, (s.verdict.score / 4) * 100)}%`;
         if (s.kept) el.classList.add("kept");
+        if (s.verdict.kill >= options.killThreshold) el.classList.add("kill");
       } else if (s.error) {
         el.classList.add("failed");
       } else {
@@ -164,7 +172,10 @@ function showDetail(s: Segment | undefined) {
   const v = s.verdict;
   el.innerHTML =
     `${range} · ${s.kept ? "<b>保留</b>" : "丢弃"} · 场景：<b>${SCENES[v.scene] ?? v.scene}</b>（${Math.round((v.sceneProbs[v.scene] ?? 0) * 100)}%）` +
-    ` · 保留概率 <b>${Math.round(v.keep * 100)}%</b> · 精彩分 <b>${v.score.toFixed(2)}</b>/4`;
+    ` · 保留概率 <b>${Math.round(v.keep * 100)}%</b> · 精彩分 <b>${v.score.toFixed(2)}</b>/4` +
+    ` · 击杀 <b>${Math.round(v.kill * 100)}%</b>` +
+    (v.opening >= 0.5 ? ` · <b>开局</b>（${Math.round(v.opening * 100)}%）` : "") +
+    (v.ending >= 0.5 ? ` · <b>结尾</b>（${Math.round(v.ending * 100)}%）` : "");
 }
 
 async function onSegmentClick(s: Segment) {
@@ -193,7 +204,7 @@ $("#pick").addEventListener("click", async () => {
     const p = await Studio.pickVideo();
     if (!p) return;
     selected = -1;
-    options = { ...p.options, keepThreshold: options.keepThreshold, scoreThreshold: options.scoreThreshold, fillGaps: options.fillGaps };
+    options = { ...options, segmentSeconds: p.options.segmentSeconds };
     renderOptions();
     $<HTMLVideoElement>("#out-video").hidden = true;
     $("#out-empty").hidden = false;
@@ -226,7 +237,8 @@ $("#analyze").addEventListener("click", async () => {
   analyzing = new Channel<Progress>((p) => {
     if (p.segment) {
       segments[p.segment.index] = p.segment;
-      if (p.segment.verdict) p.segment.kept = p.segment.verdict.keep >= options.keepThreshold || p.segment.verdict.score >= options.scoreThreshold;
+      const v = p.segment.verdict;
+      if (v) p.segment.kept = v.keep >= options.keepThreshold || v.score >= options.scoreThreshold || v.kill >= options.killThreshold;
     }
     const secs = (performance.now() - started) / 1000;
     const eta = p.done ? Math.round((secs / p.done) * (p.total - p.done)) : 0;

@@ -24,6 +24,9 @@ func main() {
 	flag.IntVar(&def.Concurrency, "j", def.Concurrency, "parallel model requests")
 	flag.Float64Var(&def.KeepThreshold, "keep", def.KeepThreshold, "keep when P(keep) ≥ this")
 	flag.Float64Var(&def.ScoreThreshold, "score", def.ScoreThreshold, "keep when score (0-4) ≥ this")
+	flag.Float64Var(&def.KillThreshold, "kill", def.KillThreshold, "keep when P(a champion is killed) ≥ this")
+	flag.BoolVar(&def.KeepOpening, "opening", def.KeepOpening, "keep the start of the game")
+	flag.BoolVar(&def.KeepEnding, "ending", def.KeepEnding, "keep the end of the game")
 	analyzeOnly := flag.Bool("analyze-only", false, "judge segments and print the selection, but do not render")
 	flag.Parse()
 	if flag.NArg() != 1 {
@@ -45,7 +48,7 @@ func main() {
 	log.Printf("judge: %s, cache: %s", judge.Name(), wd)
 	a, err := highlight.Analyze(ctx, judge, src, wd, def, func(p highlight.Progress) {
 		if s := p.Segment; s != nil && s.Verdict != nil {
-			fmt.Printf("[%3d/%d] %s  keep=%.2f score=%.2f %s\n", p.Done, p.Total, highlight.Clock(s.Start), s.Verdict.Keep, s.Verdict.Score, s.Verdict.Scene)
+			fmt.Printf("[%3d/%d] %s  keep=%.2f score=%.2f kill=%.2f open=%.2f end=%.2f %s\n", p.Done, p.Total, highlight.Clock(s.Start), s.Verdict.Keep, s.Verdict.Score, s.Verdict.Kill, s.Verdict.Opening, s.Verdict.Ending, s.Verdict.Scene)
 		} else if s != nil {
 			fmt.Printf("[%3d/%d] %s  ERROR %s\n", p.Done, p.Total, highlight.Clock(s.Start), s.Error)
 		}

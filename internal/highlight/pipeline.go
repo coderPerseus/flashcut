@@ -29,6 +29,7 @@ type Segment struct {
 type Analysis struct {
 	Source         VideoInfo `json:"source"`
 	SegmentSeconds float64   `json:"segmentSeconds"`
+	Version        int       `json:"version"`
 	Judge          string    `json:"judge"`
 	Segments       []Segment `json:"segments"`
 }
@@ -37,10 +38,15 @@ type Analysis struct {
 type Options struct {
 	SegmentSeconds float64 `json:"segmentSeconds"`
 	Concurrency    int     `json:"concurrency"`
-	// A segment is kept when its keep probability reaches KeepThreshold or
-	// its excitement score reaches ScoreThreshold.
+	// A segment is kept when its keep probability reaches KeepThreshold,
+	// its excitement score reaches ScoreThreshold, or a champion is killed
+	// in it with probability KillThreshold.
 	KeepThreshold  float64 `json:"keepThreshold"`
 	ScoreThreshold float64 `json:"scoreThreshold"`
+	KillThreshold  float64 `json:"killThreshold"`
+	// KeepOpening and KeepEnding keep the start and the end of the game.
+	KeepOpening bool `json:"keepOpening"`
+	KeepEnding  bool `json:"keepEnding"`
 	// FillGaps keeps a single dropped segment between two kept ones, so a
 	// fight is not cut in the middle.
 	FillGaps bool `json:"fillGaps"`
@@ -48,7 +54,7 @@ type Options struct {
 
 // DefaultOptions keep about 15% of an LCK broadcast (48 min → 7 min).
 func DefaultOptions() Options {
-	return Options{SegmentSeconds: 20, Concurrency: 4, KeepThreshold: 0.9, ScoreThreshold: 2.5, FillGaps: true}
+	return Options{SegmentSeconds: 20, Concurrency: 4, KeepThreshold: 0.9, ScoreThreshold: 2.5, KillThreshold: 0.4, KeepOpening: true, KeepEnding: true, FillGaps: true}
 }
 
 // WorkDir is where analysis and parts for src are kept, under base.
@@ -80,7 +86,7 @@ func Analyze(ctx context.Context, judge Judge, src, workDir string, opts Options
 	if segLen < 5 || segLen > 60 {
 		segLen = 20
 	}
-	a := &Analysis{Source: info, SegmentSeconds: segLen, Judge: judge.Name()}
+	a := &Analysis{Source: info, SegmentSeconds: segLen, Version: QuestionsVersion, Judge: judge.Name()}
 	n := int(math.Ceil(info.Duration / segLen))
 	for i := range n {
 		end := math.Min(float64(i+1)*segLen, info.Duration)
@@ -91,7 +97,7 @@ func Analyze(ctx context.Context, judge Judge, src, workDir string, opts Options
 		a.Segments[n-2].End = info.Duration
 		a.Segments = a.Segments[:n-1]
 	}
-	if cached, err := LoadAnalysis(workDir); err == nil && cached.SegmentSeconds == segLen && len(cached.Segments) == len(a.Segments) {
+	if cached, err := LoadAnalysis(workDir); err == nil && cached.Version == QuestionsVersion && cached.SegmentSeconds == segLen && len(cached.Segments) == len(a.Segments) {
 		for i, s := range cached.Segments {
 			if s.Verdict != nil {
 				a.Segments[i].Verdict = s.Verdict
@@ -189,7 +195,14 @@ func judgeSegment(ctx context.Context, judge Judge, src, workDir string, seg Seg
 func (a *Analysis) Select(opts Options) []Range {
 	for i := range a.Segments {
 		s := &a.Segments[i]
-		s.Kept = s.Verdict != nil && (s.Verdict.Keep >= opts.KeepThreshold || s.Verdict.Score >= opts.ScoreThreshold)
+		v := s.Verdict
+		s.Kept = v != nil && (v.Keep >= opts.KeepThreshold || v.Score >= opts.ScoreThreshold || v.Kill >= opts.KillThreshold)
+	}
+	if opts.KeepOpening {
+		a.keepFirst(func(v *Verdict) bool { return v.Opening >= 0.5 }, false)
+	}
+	if opts.KeepEnding {
+		a.keepFirst(func(v *Verdict) bool { return v.Ending >= 0.5 }, true)
 	}
 	if opts.FillGaps {
 		for i := 1; i+1 < len(a.Segments); i++ {
@@ -199,6 +212,28 @@ func (a *Analysis) Select(opts Options) []Range {
 		}
 	}
 	return a.Ranges()
+}
+
+// keepFirst keeps the run of consecutive segments matching match that comes
+// first in the video (or last, when fromEnd), so a stray false positive in
+// the middle of the game is not kept as the opening or the ending.
+func (a *Analysis) keepFirst(match func(*Verdict) bool, fromEnd bool) {
+	n := len(a.Segments)
+	at := func(i int) *Segment {
+		if fromEnd {
+			return &a.Segments[n-1-i]
+		}
+		return &a.Segments[i]
+	}
+	found := false
+	for i := range n {
+		s := at(i)
+		if s.Verdict != nil && match(s.Verdict) {
+			s.Kept, found = true, true
+		} else if found {
+			return
+		}
+	}
 }
 
 // Ranges merges consecutive kept segments into time ranges.
