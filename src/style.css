@@ -170,8 +170,22 @@ input[type="color"] { width: 44px; height: 24px; padding: 0 2px; border: 0.5px s
 .legend { display: flex; gap: 10px; text-transform: none; font-weight: 400; letter-spacing: 0; }
 .sw { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 4px; }
 .sw.kept { background: var(--kept); } .sw.dropped { background: var(--dropped); } .sw.pending { background: var(--pending); border: 0.5px solid var(--line); } .sw.failed { background: var(--danger); }
-.timeline-wrap { flex: 1; min-height: 0; padding: 10px 12px 4px; display: flex; flex-direction: column; }
-.timeline { position: relative; flex: 1; min-height: 40px; display: flex; align-items: flex-end; gap: 1px; }
+.timeline-wrap { flex: 1; min-height: 0; padding: 0 0 4px; display: flex; flex-direction: column; }
+.tl-tools { display: flex; align-items: center; gap: 4px; text-transform: none; letter-spacing: 0; font-weight: 400; }
+.tl-tools .sep { width: 1px; height: 14px; background: var(--line); margin: 0 6px; }
+.tl-tools .icon { width: 22px; height: 22px; font-size: 15px; }
+.tl-tools input[type="range"] { width: 120px; }
+.tl-zoom-v { min-width: 64px; font-variant-numeric: tabular-nums; text-align: right; }
+.tl-scroll { flex: 1; min-height: 0; overflow-x: auto; overflow-y: hidden; padding: 0 12px; }
+.tl-content { position: relative; height: 100%; display: flex; flex-direction: column; min-width: 100%; }
+.ruler { position: relative; height: 20px; flex-shrink: 0; border-bottom: 0.5px solid var(--line-soft); cursor: text; }
+.ruler .tick { position: absolute; bottom: 0; width: 1px; background: var(--line); height: 5px; }
+.ruler .tick.major { height: 9px; background: var(--muted); }
+.ruler .label { position: absolute; top: 1px; font-size: 10px; color: var(--muted); transform: translateX(3px); font-variant-numeric: tabular-nums; white-space: nowrap; pointer-events: none; }
+.tl-selection { position: absolute; top: 20px; bottom: 0; background: color-mix(in srgb, var(--warn) 22%, transparent); border-left: 1.5px solid var(--warn); border-right: 1.5px solid var(--warn); pointer-events: none; }
+.sel-actions { display: flex; align-items: center; gap: 6px; }
+.sel-actions .detail { margin-right: 4px; }
+.timeline { position: relative; flex: 1; min-height: 40px; display: flex; align-items: flex-end; gap: 1px; padding-top: 6px; cursor: crosshair; }
 .seg { flex: 1 1 0; min-width: 1px; height: 100%; display: flex; align-items: flex-end; }
 .seg i { display: block; width: 100%; min-height: 3px; border-radius: 1.5px 1.5px 0 0; background: var(--dropped); }
 .seg.kept i { background: var(--kept); }
@@ -180,8 +194,9 @@ input[type="color"] { width: 44px; height: 24px; padding: 0 2px; border: 0.5px s
 .seg.pinned i { box-shadow: inset 0 2px 0 var(--fg); }
 .seg.selected i { outline: 1.5px solid var(--fg); outline-offset: 1px; }
 .seg:hover i { filter: brightness(1.2); }
-.playhead { position: absolute; top: 0; bottom: 0; width: 1.5px; background: var(--danger); pointer-events: none; left: 0; }
-.ranges-bar { position: relative; height: 5px; margin-top: 5px; border-radius: 3px; background: var(--pending); overflow: hidden; flex-shrink: 0; }
+.playhead { position: absolute; top: 0; bottom: 0; width: 1.5px; background: var(--danger); pointer-events: none; left: 0; z-index: 3; }
+.playhead::before { content: ""; position: absolute; top: 0; left: -4px; border: 5px solid transparent; border-top: 6px solid var(--danger); }
+.ranges-bar { position: relative; height: 5px; margin-top: 4px; border-radius: 3px; background: var(--pending); overflow: hidden; flex-shrink: 0; }
 .ranges-bar span { position: absolute; top: 0; bottom: 0; background: var(--kept); }
 .detail-row { padding: 6px 12px 10px; display: grid; gap: 6px; }
 .detail { font-size: 12px; min-height: 18px; font-variant-numeric: tabular-nums; line-height: 1.6; }

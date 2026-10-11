@@ -330,6 +330,10 @@ export interface View {
  * them with Clef-omni, edits them from chat or controls, and exports them.
  */
 export const Studio = {
+  /** AddRange keeps or cuts an exact span of the source, in seconds. */
+  addRange(id: string, start: number, end: number, keep: boolean): Promise<View | null> {
+    return call("Studio.AddRange", id, start, end, keep);
+  },
   /**
    * Analyze asks the model about every segment that has unanswered
    * questions, streaming progress, then reselects.

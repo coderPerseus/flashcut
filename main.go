@@ -193,6 +193,7 @@ func (s *Studio) entry(id string) (*entry, error) {
 	if err != nil {
 		return nil, fmt.Errorf("找不到这个项目：%w", err)
 	}
+	p.Select() // reasons and selection follow the current rules
 	e := &entry{p: p}
 	s.projects[id] = e
 	return e, nil
@@ -260,6 +261,19 @@ func (s *Studio) DeleteRule(id, ruleID string) (*View, error) {
 				break
 			}
 		}
+		return nil
+	})
+}
+
+// AddRange keeps or cuts an exact span of the source, in seconds.
+func (s *Studio) AddRange(id string, start, end float64, keep bool) (*View, error) {
+	return s.edit(id, func(p *editor.Project) error {
+		start, end = max(0, start), min(p.Source.Duration, end)
+		if end-start < 0.1 {
+			return errors.New("选区太短了")
+		}
+		p.Checkpoint()
+		p.Edits.Ranges = append(p.Edits.Ranges, editor.RangeRule{Start: start, End: end, Keep: keep})
 		return nil
 	})
 }

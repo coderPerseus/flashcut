@@ -110,6 +110,9 @@ func selfTest(win *mygo.Window, studio *Studio) {
 			}
 		}
 		capture("edit.png")
+		eval(`window.flashcut.zoom(12, 1145.3, 1158.8); return ""`)
+		capture("timeline-zoom.png")
+		eval(`document.querySelector("#tl-fit").click(); return ""`)
 		eval(`window.flashcut.openRules(); return ""`)
 		capture("rules.png")
 		eval(`window.flashcut.openRules(); window.flashcut.openSettings(); return ""`)

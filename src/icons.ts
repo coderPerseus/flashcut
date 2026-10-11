@@ -8,7 +8,7 @@ export const icons = {
   sliders: svg('<path d="M3 4h10M3 8h10M3 12h10"/><circle cx="6" cy="4" r="1.4" fill="var(--panel)"/><circle cx="10" cy="8" r="1.4" fill="var(--panel)"/><circle cx="5" cy="12" r="1.4" fill="var(--panel)"/>'),
   template: svg('<rect x="2.5" y="2.5" width="11" height="11" rx="1.5"/><path d="M2.5 6h11M6 6v7.5"/>'),
   export: svg('<path d="M8 10V2.5M5 5.5l3-3 3 3"/><path d="M3 9.5V13h10V9.5"/>'),
-  gear: svg('<circle cx="8" cy="8" r="2.2"/><path d="M8 1.8v1.6M8 12.6v1.6M14.2 8h-1.6M3.4 8H1.8M12.4 3.6l-1.1 1.1M4.7 11.3l-1.1 1.1M12.4 12.4l-1.1-1.1M4.7 4.7 3.6 3.6"/>'),
+  gear: svg('<path d="M6.9 1.8h2.2l.35 1.7c.4.15.77.36 1.1.62l1.65-.55 1.1 1.9-1.3 1.15c.06.4.06.82 0 1.22l1.3 1.15-1.1 1.9-1.65-.55c-.33.26-.7.47-1.1.62L9.1 14.2H6.9l-.35-1.7c-.4-.15-.77-.36-1.1-.62l-1.65.55-1.1-1.9L4 9.38a3.9 3.9 0 0 1 0-1.22L2.7 7l1.1-1.9 1.65.55c.33-.26.7-.47 1.1-.62Z"/><circle cx="8" cy="8" r="2"/>'),
   sidebarLeft: svg('<rect x="1.8" y="2.5" width="12.4" height="11" rx="1.5"/><path d="M6 2.5v11"/>'),
   sidebarRight: svg('<rect x="1.8" y="2.5" width="12.4" height="11" rx="1.5"/><path d="M10 2.5v11"/>'),
   panelBottom: svg('<rect x="1.8" y="2.5" width="12.4" height="11" rx="1.5"/><path d="M1.8 9.5h12.4"/>'),

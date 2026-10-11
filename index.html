@@ -56,16 +56,35 @@
         <div id="edit-bottom" class="panel timeline-panel" data-panel="edit-bottom">
           <div class="panel-head">
             <span>时间线</span>
-            <div class="legend muted">
-              <span><i class="sw kept"></i>保留</span><span><i class="sw dropped"></i>剪掉</span><span><i class="sw pending"></i>待分析</span><span><i class="sw failed"></i>失败</span><span>柱高 = 精彩程度</span>
+            <div class="tl-tools">
+              <div class="legend muted" title="柱高表示精彩程度">
+                <span><i class="sw kept"></i>保留</span><span><i class="sw dropped"></i>剪掉</span><span><i class="sw pending"></i>待分析</span><span><i class="sw failed"></i>失败</span>
+              </div>
+              <span class="sep"></span>
+              <button id="tl-zoom-out" class="icon" title="缩小（⌘−）">−</button>
+              <input id="tl-zoom" type="range" min="0" max="1000" value="0" title="缩放时间线（也可以按住 ⌘ 滚动或双指捏合）" />
+              <button id="tl-zoom-in" class="icon" title="放大（⌘=）">+</button>
+              <button id="tl-fit" class="small" title="整条时间线放进窗口（⌘0）">适配</button>
+              <span id="tl-zoom-v" class="muted tl-zoom-v"></span>
             </div>
           </div>
           <div class="timeline-wrap">
-            <div id="timeline" class="timeline"><div id="playhead" class="playhead"></div></div>
-            <div id="ranges-bar" class="ranges-bar"></div>
+            <div id="tl-scroll" class="tl-scroll">
+              <div id="tl-content" class="tl-content">
+                <div id="ruler" class="ruler" title="点击或拖动跳转"></div>
+                <div id="timeline" class="timeline" title="点击选中一段；拖动框选任意时间范围"></div>
+                <div id="ranges-bar" class="ranges-bar"></div>
+                <div id="tl-selection" class="tl-selection" hidden></div>
+                <div id="playhead" class="playhead"></div>
+              </div>
+            </div>
           </div>
           <div class="detail-row">
-            <div id="detail" class="detail muted">点击时间线上的一段可以跳转预览，并手动保留或剪掉。</div>
+            <div id="sel-actions" class="sel-actions" hidden>
+              <span id="sel-label" class="detail"></span>
+              <button data-sel="keep">保留选区</button><button data-sel="drop">剪掉选区</button><button data-sel="play">播放选区</button><button data-sel="clear" class="link">取消</button>
+            </div>
+            <div id="detail" class="detail muted">点击时间线上的一段可以跳转预览；拖动框选任意范围，精确保留或剪掉；按住 ⌘ 滚动缩放。</div>
             <div id="seg-actions" class="seg-actions" hidden>
               <button data-mode="keep">保留这段</button><button data-mode="drop">剪掉这段</button><button data-mode="auto">交给 AI</button>
             </div>

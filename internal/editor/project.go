@@ -337,10 +337,10 @@ func (p *Project) Select() {
 		}
 		var priority float64
 		if len(keepRules) > 0 {
-			r, prob, hit := best(s, keepRules)
+			_, prob, hit := best(s, keepRules)
 			priority = prob
 			if hit {
-				s.Kept, s.Reason = true, fmt.Sprintf("保留：%s（%d%%）", r.Text, pct(prob))
+				s.Kept, s.Reason = true, "保留："+hitList(s, keepRules)
 			} else {
 				s.Reason = "不符合保留要求"
 			}
@@ -481,6 +481,35 @@ func best(s *Segment, rules []Rule) (Rule, float64, bool) {
 		}
 	}
 	return top, math.Max(topP, 0), hit
+}
+
+// hitList names every rule s matches, strongest first, marking weak
+// matches as uncertain so the clip list does not overstate them.
+func hitList(s *Segment, rules []Rule) string {
+	type hit struct {
+		text string
+		p    float64
+	}
+	var hits []hit
+	for _, r := range rules {
+		if v, norm, ok := s.Value(r); ok && v >= r.Threshold {
+			hits = append(hits, hit{r.Text, norm})
+		}
+	}
+	sort.Slice(hits, func(i, j int) bool { return hits[i].p > hits[j].p })
+	// With confident matches, weak ones are noise.
+	if len(hits) > 0 && hits[0].p >= 0.6 {
+		hits = slices.DeleteFunc(hits, func(h hit) bool { return h.p < 0.6 })
+	}
+	var parts []string
+	for _, h := range hits {
+		label := fmt.Sprintf("%s %d%%", h.text, pct(h.p))
+		if h.p < 0.6 {
+			label = "可能" + label
+		}
+		parts = append(parts, label)
+	}
+	return strings.Join(parts, "、")
 }
 
 // keepRun keeps the first run of consecutive segments matching r (the last

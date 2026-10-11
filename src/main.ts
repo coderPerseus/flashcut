@@ -6,6 +6,7 @@ import { initSettings, openSettings } from "./settings";
 import { examplesFor, initTemplates, openManager, renderPicker } from "./templates";
 import { initSubs, subsDrop, subsHome, subsToolbar } from "./subtitles";
 import { $, attempt, clock, el, escapeHTML, mb, toast } from "./ui";
+import { clearSelection, consumeClick, fit, getSelection, initTimeline, resetTimeline, selectRange, setPlayhead, setZoom, type Selection } from "./timeline";
 
 let view: View | null = null;
 let selected = -1;
@@ -53,7 +54,7 @@ function renderToolbar() {
   rulesBtn.onclick = () => toggleRules(rulesBtn);
   const tpl = iconButton("template", "模板");
   tpl.onclick = () => openManager();
-  const exp = el("button", { class: "primary", id: "export", title: "导出成片（⌘E）" });
+  const exp = el("button", { id: "export", title: "导出成片（⌘E）" });
   exp.innerHTML = `${icons.export}<span style="margin-left:4px">导出</span>`;
   exp.style.display = "inline-flex";
   exp.style.alignItems = "center";
@@ -166,6 +167,7 @@ function openView(v: View | null | undefined) {
   setMode("edit");
   $<HTMLVideoElement>("#video").src = v.mediaUrl;
   setView(v);
+  resetTimeline();
   $("#input").focus();
 }
 
@@ -214,10 +216,12 @@ function renderTimeline() {
     seg.title = `${clock(s.start)} – ${clock(s.end)}${s.reason ? " · " + s.reason : ""}`;
     seg.onmouseenter = () => showDetail(s);
     seg.onmouseleave = () => showDetail(project()?.segments[selected]);
-    seg.onclick = () => selectSegment(s.index, true);
+    seg.onclick = () => {
+      if (!consumeClick()) selectSegment(s.index, true);
+    };
     return seg;
   });
-  $("#timeline").replaceChildren(...bars, $("#playhead"));
+  $("#timeline").replaceChildren(...bars);
 }
 
 function renderRanges() {
@@ -416,9 +420,17 @@ $("#model-chip").onclick = () => openSettings("models");
 
 function renderBusy() {
   const on = busy !== "";
-  for (const id of ["#undo", "#export", "#analyze", "#tpl-apply", "#tpl-save"]) {
+  for (const id of ["#undo", "#analyze", "#tpl-apply", "#tpl-save"]) {
     const b = document.querySelector<HTMLButtonElement>(id);
     if (b) b.disabled = on;
+  }
+  // Export lights up only once there is a cut to export.
+  const exp = document.querySelector<HTMLButtonElement>("#export");
+  if (exp) {
+    const ready = !!view?.ranges.length;
+    exp.classList.toggle("primary", ready);
+    exp.disabled = on || !ready;
+    exp.title = ready ? "导出成片（⌘E）" : "还没有成片：先在聊天里说要求，或用剪辑要求 → 智能剪辑";
   }
   const send = $<HTMLButtonElement>("#send");
   send.disabled = on;
@@ -581,7 +593,11 @@ const video = $<HTMLVideoElement>("#video");
 video.addEventListener("timeupdate", () => {
   const p = project();
   if (!p) return;
-  $("#playhead").style.left = `${(video.currentTime / p.source.duration) * 100}%`;
+  setPlayhead(video.currentTime, !video.paused);
+  if (playUntil !== null && video.currentTime >= playUntil) {
+    video.pause();
+    playUntil = null;
+  }
   if (!$<HTMLInputElement>("#preview").checked || video.paused || !view) return;
   const t = video.currentTime;
   const ranges: Range[] = view.ranges;
@@ -597,6 +613,52 @@ $("#preview").addEventListener("change", () => {
     video.play();
   }
 });
+
+// ---- timeline selection ----
+
+/** zoomStep returns the pixels per second after zooming by factor. */
+function zoomStep(factor: number) {
+  const w = $("#tl-content").getBoundingClientRect().width;
+  const d = project()?.source.duration ?? 1;
+  return (w / d) * factor;
+}
+
+let playUntil: number | null = null;
+const fmtSec = (t: number) => `${clock(Math.floor(t))}.${Math.floor((t % 1) * 10)}`;
+
+initTimeline({
+  duration: () => project()?.source.duration ?? 0,
+  seek: (t) => (video.currentTime = t),
+  onSelect: (sel: Selection | null) => {
+    $("#sel-actions").hidden = !sel;
+    $("#detail").hidden = !!sel;
+    if (sel) $("#sel-label").textContent = `选区 ${fmtSec(sel.start)} – ${fmtSec(sel.end)}（${(sel.end - sel.start).toFixed(1)} 秒）`;
+  },
+});
+
+for (const b of document.querySelectorAll<HTMLButtonElement>("#sel-actions button")) {
+  b.onclick = async () => {
+    const sel = getSelection();
+    const p = project();
+    if (!sel || !p) return;
+    switch (b.dataset.sel) {
+      case "play":
+        video.currentTime = sel.start;
+        playUntil = sel.end;
+        video.play();
+        return;
+      case "clear":
+        clearSelection();
+        return;
+    }
+    const v = await attempt(() => Studio.addRange(p.id, sel.start, sel.end, b.dataset.sel === "keep"));
+    if (v) {
+      setView(v);
+      clearSelection();
+      toast(`${b.dataset.sel === "keep" ? "已保留" : "已剪掉"} ${fmtSec(sel.start)} – ${fmtSec(sel.end)}`);
+    }
+  };
+}
 
 // ---- keyboard ----
 
@@ -615,8 +677,18 @@ document.addEventListener("keydown", (e) => {
   } else if (cmd && e.key === "e" && mode === "edit") {
     e.preventDefault();
     exportVideo();
+  } else if (cmd && (e.key === "=" || e.key === "+") && mode === "edit") {
+    e.preventDefault();
+    setZoom(zoomStep(1.6));
+  } else if (cmd && e.key === "-" && mode === "edit") {
+    e.preventDefault();
+    setZoom(zoomStep(1 / 1.6));
+  } else if (cmd && e.key === "0" && mode === "edit") {
+    e.preventDefault();
+    fit();
   } else if (e.key === "Escape") {
     $("#rules-pop").hidden = true;
+    clearSelection();
   } else if (e.key === " " && !typing && mode === "edit" && project()) {
     e.preventDefault();
     video.paused ? video.play() : video.pause();
@@ -666,6 +738,7 @@ declare global {
       subs(video: string, sub: string): Promise<void>;
       subsBusy(): boolean;
       selectIssue(): void;
+      zoom(pps: number, start: number, end: number): void;
     };
   }
 }
@@ -690,6 +763,11 @@ window.flashcut = {
     $<HTMLButtonElement>("#subs-run").click();
   },
   subsBusy: () => !$("#subs-progress").hidden,
+  zoom: (pps, start, end) => {
+    setZoom(pps, start, $("#tl-scroll").getBoundingClientRect().left + 100);
+    selectRange({ start, end });
+    video.currentTime = start;
+  },
   selectIssue: () => {
     const row = [...document.querySelectorAll<HTMLElement>("#cues .row-item")].find((r) => r.querySelector(".dot.fixed"));
     row?.click();
