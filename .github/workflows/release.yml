@@ -1,0 +1,49 @@
+name: Release
+
+# Push a tag such as v0.2.0 to build the universal macOS app and publish it
+# as a GitHub release. The website links to the latest release's
+# FlashCut-macOS.dmg.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-14
+    env:
+      GOTOOLCHAIN: auto
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: true
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - name: Test
+        run: go test ./...
+      - name: Set the version from the tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: sed -i '' "s/version: \".*\"/version: \"${GITHUB_REF_NAME#v}\"/" mygo.config.ts
+      - name: Build the universal app
+        run: ./node_modules/.bin/mygo build -platform darwin/universal
+      - name: Package
+        run: |
+          mkdir -p dist-release
+          cp build/darwin-universal/*.dmg dist-release/FlashCut-macOS.dmg
+          ditto -c -k --keepParent "build/darwin-universal/闪剪.app" dist-release/FlashCut-macOS.zip
+          shasum -a 256 dist-release/* > dist-release/SHA256SUMS.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: FlashCut-macOS
+          path: dist-release/*
+      - name: Publish the release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist-release/*
+          generate_release_notes: true

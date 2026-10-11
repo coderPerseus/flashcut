@@ -104,7 +104,13 @@ input[type="color"] { width: 44px; height: 24px; padding: 0 2px; border: 0.5px s
   background: var(--titlebar); border-bottom: 0.5px solid var(--line); flex-shrink: 0;
 }
 .tb-left { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
-.app-name { font-weight: 700; font-size: 13px; }
+.app-name {
+  --app-region: no-drag;
+  display: inline-flex; align-items: center; gap: 6px; font-weight: 700; font-size: 13px;
+  border: 0; background: none; box-shadow: none; padding: 2px 6px; border-radius: 6px; color: var(--fg);
+}
+.app-name:hover { background: var(--hover); }
+.app-name img { width: 18px; height: 18px; border-radius: 4px; }
 #project-name { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tb-right { display: flex; justify-content: flex-end; align-items: center; gap: 2px; }
 .tb-right .sep { width: 1px; height: 16px; background: var(--line); margin: 0 6px; }
@@ -116,7 +122,7 @@ input[type="color"] { width: 44px; height: 24px; padding: 0 2px; border: 0.5px s
 /* ---- home ---- */
 .home { flex: 1; overflow: auto; padding: 56px 24px; display: grid; justify-items: center; align-content: start; gap: 36px; }
 .hero { max-width: 560px; text-align: center; display: grid; gap: 12px; justify-items: center; }
-.hero-mark { font-size: 48px; }
+.hero-mark { width: 88px; height: 88px; border-radius: 20px; box-shadow: 0 6px 24px rgb(0 0 0 / 0.18); }
 .hero h1 { font-size: 26px; }
 .hero p { margin: 0; line-height: 1.7; }
 .hero-actions { display: flex; gap: 10px; }

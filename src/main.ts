@@ -165,6 +165,11 @@ async function pick() {
   if (v) openView(v);
 }
 $("#open-big").onclick = pick;
+$("#home-btn").onclick = () => {
+  if (busy) return toast("请等当前操作完成");
+  $<HTMLVideoElement>("#video").pause();
+  showHome();
+};
 $("#subs-big").onclick = () => setMode("subs");
 
 function openView(v: View | null | undefined) {

@@ -1,56 +1,69 @@
-# 闪剪
+<p align="center"><img src="site/icon-512.png" width="128" alt="闪剪" /></p>
 
-用 [MyGo](https://mygo.egoist.dev/) 写的 macOS 桌面应用：打开任意视频，用一句话说出剪辑要求，闪剪逐段看完视频、挑出符合要求的片段，再用 ffmpeg 导出成片。
+<h1 align="center">闪剪 FlashCut</h1>
 
-- **视频理解**：Cloudflare **Clef-omni**（兼容 Jev 决策 API，能看画面也能听声音），每段视频回答“精彩程度 0–4”以及每条剪辑要求“是否符合”。
-- **聊天理解**：**Clef-flash** 判断一句话想做什么（保留 / 去掉某类内容、改时长、指定时间段、撤销、重来、导出），一句话可以同时包含多个动作；时长和时间段由本地规则解析（支持“3:20 到 4:10”“开头 30 秒”“最后 1 分钟”“控制在 5 分钟”“一分半”“再短一点”）。
-- **剪辑引擎**（`internal/editor`）：
-  - 有“保留”要求时，只保留命中的片段；没有时按精彩程度挑选。
-  - “去掉”要求优先于“保留”。
-  - 时长上限按相关度裁剪，并把前后留白、补齐空隙都算进去。
-  - 精确时间段按秒切，不受分段限制。
-  - 手动保留 / 剪掉某一段。
-  - 50 步撤销。
-  - 每个视频一个项目，自动保存，聊天记录也会保存。
-- **增量分析**：模型的回答按问题缓存，新增一条要求只问这一个问题，改阈值、时长、时间段都不再调用模型。
+<p align="center">说一句话，剪好一条视频。开源的 macOS AI 视频剪辑应用。<br/>
+<a href="https://cut.islumi.com">官网</a> · <a href="https://github.com/coderPerseus/flashcut/releases/latest">下载</a></p>
 
-## 依赖
+打开任意视频，告诉闪剪“只保留击杀和团战，控制在 5 分钟以内”。它会逐段看完视频（画面和声音），按要求挑出片段，加上 Remotion 动效并导出。另外还能对照语音或画面校对字幕。
 
-- Go 1.27+（`GOTOOLCHAIN=auto` 会自动下载）、Bun、ffmpeg/ffprobe（`brew install ffmpeg`）
-- Cloudflare 凭证，二选一：
-  - 在应用「设置」里填 Account ID 和 API Token（需要 Workers AI 权限）。只保存在本机，文件权限 0600，不会回传给页面。
-  - 本机已登录的 `cf` 命令行（`cf auth login`）。
+![闪剪剪辑界面](site/img/edit.jpg)
 
-## 运行
+## 功能
+
+- **聊天剪辑**：保留 / 去掉某类内容、改时长、指定时间段、撤销、导出，一句话可以包含多个要求。聊天模型可配置，会调用剪辑工具。
+- **剪辑模板**：是非、选择、打分三种题型，每题可设“保留 / 去掉 / 加分 / 动效节点 / 开局 / 结尾”；内置电竞、体育、访谈、Vlog、课程模板，可导入导出。
+- **Remotion 动效**：开场标题、节点转场、高能时刻（角标、推近、震屏）、结尾提示、片尾卡片。
+- **字幕校对**：SRT / VTT / ASS。Clef-omni 逐条判断，Whisper 或视觉模型取证，小模型给出最小修改，再由 Clef-omni 复核；名字类修改交给人工确认。
+- **精细时间线**：缩放到 0.1 秒、框选范围保留或剪掉、按状态过滤。
+- **自带模型**：OpenAI 兼容 / Anthropic 协议的任意服务（API 中转站、阿里云百炼、DeepSeek、Ollama…），带连接测试和模型列表。
+
+## 安装
+
+1. 从 [Releases](https://github.com/coderPerseus/flashcut/releases/latest) 下载 `FlashCut-macOS.dmg`，把“闪剪”拖进“应用程序”。安装包未签名，第一次请右键 → 打开；提示“已损坏”时运行 `xattr -dr com.apple.quarantine /Applications/闪剪.app`。
+2. 安装 ffmpeg：`brew install ffmpeg`。
+3. 连接 Cloudflare：`npm i -g cf && cf auth login`（会被自动检测），或在「设置 → 模型」里填 Account ID 和有 Workers AI 权限的 API Token。
+4. 可选：导出动效需要 Node.js 18+（首次使用自动安装渲染引擎）。
+
+## 开发
+
+需要 Go 1.27+（`GOTOOLCHAIN=auto` 会自动下载）、Bun 和 ffmpeg。
 
 ```bash
 bun install
-bun run dev        # 开发模式（Vite 端口 5188）
-bun run build      # 打包 闪剪.app / .dmg 到 build/darwin-arm64/
-go test ./...      # 单元测试（选段、解析、撤销、增量分析）
+bun run dev                     # 开发模式
+bun run build                   # 打包到 build/
+go test ./...                   # 单元测试
+node scripts/icon.mjs           # 从 public/logo.svg 生成图标
 ```
 
-命令行版本，和聊天走同一套逻辑：
+命令行工具（与 App 共用同一套逻辑）：
 
 ```bash
 go run ./cmd/flashcut -m "只保留击杀和团战" -m "控制在5分钟以内" -o out.mp4 match.mp4
+go run ./cmd/subcheck -o fixed.srt video.mp4 subtitles.srt
 ```
 
-## 费用和速度（实测）
+推送 `v*` 标签会由 GitHub Actions 构建通用（Apple 芯片 + Intel）安装包并发布 Release。
 
-48 分钟、720p 的英雄联盟比赛，切成 191 段，每段 15 秒：
+### 目录
 
-- 第一次分析约 2 分 50 秒（4 路并发），约 75 万 token，约 $0.12。
-- 之后每新增一条“保留 / 去掉”要求，会再跑一遍，花费相近。
-- 聊天理解每句约 400 token，不到 $0.0001。
+| 路径 | 内容 |
+|---|---|
+| `main.go`、`settings.go`、`agent.go`、`subtitles.go` | 桌面端接口（MyGo 绑定） |
+| `internal/clef` | Cloudflare Clef / Workers AI 客户端（cf CLI 或 API Token） |
+| `internal/editor` | 项目、分段、规则、选段、聊天意图解析 |
+| `internal/preset` | 模板与内置模板 |
+| `internal/effects` | Remotion 动效（内嵌的 Remotion 项目） |
+| `internal/subs` | 字幕解析与校对 |
+| `internal/llm` | OpenAI 兼容 / Anthropic / Workers AI 聊天客户端 |
+| `src/` | 前端界面 |
+| `site/` | 官网 |
 
-要求“保留所有击杀和团战”时，对照画面顶部比分，15 处击杀命中 13 处。可以在要求标签上把灵敏度往左拉，或者补一句“也保留……”，提高召回。
+## 隐私与费用
 
-## 自测
+视频留在本机；分析时把低清晰度的小片段发给 Cloudflare Workers AI。48 分钟的比赛分析一次约 $0.12，字幕校对约每小时 $0.5。密钥只保存在本机（`~/Library/Application Support/闪剪/settings.json`，权限 0600）。
 
-```bash
-FLASHCUT_OPEN=<视频> FLASHCUT_SELFTEST=shot.png FLASHCUT_SELFTEST_CHAT="保留精彩片段|控制在3分钟以内" FLASHCUT_SELFTEST_EXPORT=out.mp4 \
-  build/darwin-arm64/闪剪.app/Contents/MacOS/闪剪
-```
+## 许可
 
-自测会自动打开视频、依次发送聊天消息、导出并截图，日志写在标准输出。
+[MIT](LICENSE)。动效使用 [Remotion](https://www.remotion.dev)，其许可对个人和 3 人以内的公司免费，更大的团队商用需购买 Remotion 公司授权。
