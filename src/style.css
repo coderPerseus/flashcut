@@ -346,3 +346,11 @@ dialog.wide { width: min(1040px, 96vw); height: min(720px, 92vh); }
 .cue-detail .box { padding: 7px 9px; border-radius: 6px; background: var(--panel-2); border: 0.5px solid var(--line-soft); white-space: pre-wrap; line-height: 1.55; }
 .cue-detail textarea { width: 100%; resize: vertical; min-height: 64px; line-height: 1.55; }
 .status-pill { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; }
+
+/* legend filters */
+.legend button { border: 0; background: none; box-shadow: none; padding: 1px 6px; min-height: 20px; font-size: 11px; color: var(--muted); border-radius: 4px; display: inline-flex; align-items: center; gap: 2px; }
+.legend button:hover { background: var(--hover); color: var(--fg); }
+.legend button.on { background: var(--accent-soft); color: var(--fg); font-weight: 600; }
+.legend button b { font-weight: 400; font-variant-numeric: tabular-nums; }
+.legend button b:empty { display: none; }
+.seg.dim { opacity: 0.15; }

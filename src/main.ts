@@ -15,6 +15,14 @@ let running: Channel<Event> | null = null;
 let pendingText = "";
 let lastExport: ExportResult | null = null;
 let mode: "edit" | "subs" = "edit";
+type SegFilter = "" | "kept" | "dropped" | "pending" | "failed";
+let segFilter: SegFilter = "";
+
+function segStatus(s: Segment): Exclude<SegFilter, ""> {
+  if (s.error) return "failed";
+  if (s.answers?.interest === undefined) return "pending";
+  return s.kept ? "kept" : "dropped";
+}
 const project = () => view?.project ?? null;
 const MODE_LABELS: Record<string, string> = { keep: "保留", drop: "去掉", boost: "加分", marker: "节点", opening: "开局", ending: "结尾" };
 const VIDEO_EXT = /\.(mp4|mov|m4v|mkv|webm|avi|flv|ts|mts|wmv|mpg|mpeg)$/i;
@@ -212,6 +220,7 @@ function renderTimeline() {
     if (s.kept) seg.classList.add("kept");
     if (p.edits.overrides?.[s.index] !== undefined) seg.classList.add("pinned");
     if (s.index === selected) seg.classList.add("selected");
+    if (segFilter && segStatus(s) !== segFilter) seg.classList.add("dim");
     seg.append(bar);
     seg.title = `${clock(s.start)} – ${clock(s.end)}${s.reason ? " · " + s.reason : ""}`;
     seg.onmouseenter = () => showDetail(s);
@@ -222,6 +231,7 @@ function renderTimeline() {
     return seg;
   });
   $("#timeline").replaceChildren(...bars);
+  renderLegend();
 }
 
 function renderRanges() {
@@ -237,9 +247,59 @@ function renderRanges() {
   );
 }
 
+function renderLegend() {
+  const p = project();
+  const counts: Record<string, number> = { kept: 0, dropped: 0, pending: 0, failed: 0 };
+  for (const s of p?.segments ?? []) counts[segStatus(s)]!++;
+  for (const b of document.querySelectorAll<HTMLButtonElement>("#legend button")) {
+    const f = b.dataset.filter!;
+    b.classList.toggle("on", segFilter === f);
+    b.querySelector("b")!.textContent = counts[f] ? String(counts[f]) : "";
+  }
+}
+
+for (const b of document.querySelectorAll<HTMLButtonElement>("#legend button")) {
+  b.onclick = () => {
+    segFilter = segFilter === b.dataset.filter ? "" : (b.dataset.filter as SegFilter);
+    renderTimeline();
+    renderClips();
+  };
+}
+
+/** renderFilteredSegments lists the segments the legend filter picks. */
+function renderFilteredSegments() {
+  const p = project()!;
+  const names: Record<string, string> = { kept: "保留", dropped: "剪掉", pending: "待分析", failed: "失败" };
+  const list = p.segments.filter((s) => segStatus(s) === segFilter);
+  $("#clip-count").textContent = `${names[segFilter]} ${list.length}`;
+  const video = $<HTMLVideoElement>("#video");
+  $("#clips").replaceChildren(
+    ...(list.length
+      ? list.map((s) => {
+          const row = el(
+            "div",
+            { class: "row-item" + (s.index === selected ? " active" : "") },
+            el("div", { class: "time" }, el("span", { class: `dot ${segStatus(s) === "kept" ? "fixed" : segStatus(s) === "failed" ? "error" : segStatus(s)}` }), `${clock(s.start)} – ${clock(s.end)}`),
+            el("div", { class: "text muted", textContent: s.error || s.reason || "" }),
+          );
+          row.onclick = () => {
+            selectSegment(s.index, true);
+            video.currentTime = s.start + 0.01;
+            renderFilteredSegments();
+          };
+          return row;
+        })
+      : [el("div", { class: "empty-note", textContent: `没有${names[segFilter]}的段。` })]),
+  );
+}
+
 function renderClips() {
   const p = project();
   if (!p || !view) return;
+  if (segFilter) {
+    renderFilteredSegments();
+    return;
+  }
   $("#clip-count").textContent = view.ranges.length ? `${view.ranges.length}` : "";
   const video = $<HTMLVideoElement>("#video");
   const items = view.ranges.map((r, i) => {
