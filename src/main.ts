@@ -1,5 +1,5 @@
 import { Channel } from "mygo-runtime";
-import { Studio, type Event, type ExportResult, type Quality, type Range, type Segment, type View } from "./mygo";
+import { Studio, type EffectSettings, type Event, type ExportResult, type Quality, type Range, type Segment, type View } from "./mygo";
 import { $, attempt, clock, escapeHTML, mb, message, toast } from "./ui";
 import { examplesFor, initTemplates, renderPicker } from "./templates";
 
@@ -366,7 +366,10 @@ function onEvent(e: Event, started: number) {
     cancelAnimationFrame(frame);
     frame = requestAnimationFrame(renderTimeline);
   }
-  if (e.kind === "export") setProgress(e.done, e.total, `导出 ${e.done}/${e.total} 个片段`);
+  if (e.kind === "export") {
+    const label = e.text === "剪辑" || !e.text ? `剪辑 ${e.done}/${e.total} 个片段` : `${e.text} ${Math.round((e.done / Math.max(1, e.total)) * 100)}%`;
+    setProgress(e.done, e.total, label);
+  }
 }
 
 async function run<T>(kind: typeof busy, fn: (ch: Channel<Event>) => Promise<T>): Promise<T | undefined> {
@@ -444,11 +447,45 @@ document.addEventListener("keydown", (e) => {
 });
 
 $("#export").onclick = exportVideo;
+
+const fxChecks = { intro: "#fx-intro", transitions: "#fx-transitions", highlights: "#fx-highlights", ending: "#fx-ending", outro: "#fx-outro", progressBar: "#fx-progress" } as const;
+
+/** askEffects shows the export dialog and returns the chosen effects, or null. */
+async function askEffects(id: string): Promise<EffectSettings | null> {
+  const fx = await attempt(() => Studio.effectsFor(id));
+  if (!fx) return null;
+  $<HTMLSelectElement>("#fx-style").value = fx.style || "none";
+  $<HTMLInputElement>("#fx-title").value = fx.title;
+  $<HTMLInputElement>("#fx-subtitle").value = fx.subtitle;
+  $<HTMLInputElement>("#fx-accent").value = fx.accent || "#7c5cff";
+  for (const [k, sel] of Object.entries(fxChecks)) $<HTMLInputElement>(sel).checked = fx[k as keyof typeof fxChecks];
+  const syncOptions = () => ($("#fx-options").hidden = $<HTMLSelectElement>("#fx-style").value === "none");
+  $("#fx-style").onchange = syncOptions;
+  syncOptions();
+  const d = $<HTMLDialogElement>("#export-dialog");
+  d.returnValue = "";
+  d.showModal();
+  await new Promise((resolve) => d.addEventListener("close", resolve, { once: true }));
+  if (d.returnValue !== "export") return null;
+  const out: EffectSettings = {
+    style: $<HTMLSelectElement>("#fx-style").value,
+    title: $<HTMLInputElement>("#fx-title").value.trim(),
+    subtitle: $<HTMLInputElement>("#fx-subtitle").value.trim(),
+    accent: $<HTMLInputElement>("#fx-accent").value,
+    intro: false, transitions: false, highlights: false, ending: false, outro: false, progressBar: false,
+  };
+  for (const [k, sel] of Object.entries(fxChecks)) out[k as keyof typeof fxChecks] = $<HTMLInputElement>(sel).checked;
+  return out;
+}
+
 async function exportVideo() {
   const p = project();
   if (!p) return;
+  if (busy) return toast("请等当前操作完成");
   if (!view?.ranges.length) return toast("还没有要保留的片段", true);
-  const r = await run("export", (ch) => Studio.export(p.id, ch));
+  const fx = await askEffects(p.id);
+  if (!fx) return;
+  const r = await run("export", (ch) => Studio.export(p.id, fx, ch));
   if (!r) return;
   lastExport = r;
   $("#result").hidden = false;

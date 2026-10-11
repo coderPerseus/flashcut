@@ -60,6 +60,7 @@ func esports() *Template {
 			},
 		},
 		SegmentSeconds: 15, PadSeconds: 2, FillGaps: true, InterestThreshold: 2.5,
+		Effects:  effects("esports", "#7c5cff"),
 		Examples: []string{"也保留所有推塔", "控制在 5 分钟以内", "去掉大龙之前的部分"},
 	}
 }
@@ -92,6 +93,7 @@ func sports() *Template {
 			noul("break", "中场 / 广告", editor.ModeDrop, 0.6, "Is this clip a break in play: halftime, studio talk, an ad, or a waiting screen?", "A break", "Play or the field"),
 		},
 		SegmentSeconds: 15, PadSeconds: 3, FillGaps: true, InterestThreshold: 2.5,
+		Effects:  effects("esports", "#00c2ff"),
 		Examples: []string{"只要进球", "控制在 3 分钟以内", "去掉中场休息"},
 	}
 }
@@ -118,6 +120,7 @@ func interview() *Template {
 				Marker:       "transition",
 			},
 		},
+		Effects:        effects("clean", "#ff8a3d"),
 		SegmentSeconds: 20, PadSeconds: 1, FillGaps: true, InterestThreshold: 2.5,
 		Examples: []string{"只保留讲到 AI 的部分", "剪成 90 秒的短视频", "去掉主持人的开场白"},
 	}
@@ -142,6 +145,7 @@ func vlog() *Template {
 			noul("junk", "无效镜头", editor.ModeDrop, 0.7,
 				"Is this clip unusable: very shaky, blurry, accidental recording, or walking with nothing happening?", "Unusable", "Usable"),
 		},
+		Effects:        effects("clean", "#ff8a3d"),
 		SegmentSeconds: 10, PadSeconds: 0.5, FillGaps: true, InterestThreshold: 2.5, Quality: media.QualityMedium,
 		Examples: []string{"保留吃东西的镜头", "剪成 1 分钟", "去掉在车上的部分"},
 	}
@@ -161,7 +165,14 @@ func course() *Template {
 			noul("idle", "等待 / 跑题", editor.ModeDrop, 0.65,
 				"Is this clip mostly waiting, setup, silence, off-topic talk, or repeating something already said?", "Idle or off-topic", "Teaching"),
 		},
+		Effects:        effects("clean", "#ff8a3d"),
 		SegmentSeconds: 20, PadSeconds: 1, FillGaps: true, InterestThreshold: 2.5,
 		Examples: []string{"只保留讲到公式的部分", "控制在 10 分钟", "去掉开头自我介绍"},
 	}
+}
+
+func effects(style, accent string) *editor.EffectSettings {
+	e := editor.DefaultEffects()
+	e.Style, e.Accent = style, accent
+	return &e
 }

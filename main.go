@@ -19,6 +19,7 @@ import (
 
 	"flashcut/internal/clef"
 	"flashcut/internal/editor"
+	"flashcut/internal/effects"
 	"flashcut/internal/media"
 	"flashcut/internal/preset"
 )
@@ -605,8 +606,27 @@ func (s *Studio) ExportTemplate(ctx context.Context, templateID string) (string,
 
 // ---- export ----
 
-// Export asks where to save, then cuts and joins the selection.
-func (s *Studio) Export(ctx context.Context, id string, events *mygo.Channel[Event]) (*ExportResult, error) {
+// EffectsFor returns the effect settings to suggest for a project: the
+// last ones used, else its template's, else the defaults.
+func (s *Studio) EffectsFor(id string) (editor.EffectSettings, error) {
+	e, err := s.entry(id)
+	if err != nil {
+		return editor.EffectSettings{}, err
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.p.Effects != nil {
+		return *e.p.Effects, nil
+	}
+	if t, err := templates().Get(e.p.TemplateID); err == nil && t.Effects != nil {
+		return *t.Effects, nil
+	}
+	return editor.DefaultEffects(), nil
+}
+
+// Export asks where to save, then cuts and joins the selection and, when
+// fx.Style is not "none", adds Remotion motion graphics.
+func (s *Studio) Export(ctx context.Context, id string, fx editor.EffectSettings, events *mygo.Channel[Event]) (*ExportResult, error) {
 	e, err := s.entry(id)
 	if err != nil {
 		return nil, err
@@ -640,19 +660,43 @@ func (s *Studio) Export(ctx context.Context, id string, events *mygo.Channel[Eve
 	if filepath.Clean(out) == filepath.Clean(p.Source.Path) {
 		return nil, errors.New("不能覆盖原视频，请换一个文件名")
 	}
-	return s.export(ctx, p, out, events)
+	p.Effects = &fx
+	return s.export(ctx, p, out, fx, events)
 }
 
-func (s *Studio) export(ctx context.Context, p *editor.Project, out string, events *mygo.Channel[Event]) (*ExportResult, error) {
+func (s *Studio) export(ctx context.Context, p *editor.Project, out string, fx editor.EffectSettings, events *mygo.Channel[Event]) (*ExportResult, error) {
 	ranges := p.Ranges()
-	err := media.Render(ctx, p.Source.Path, out, ranges, loadSettings().Quality, func(done, total int) {
-		send(events, Event{Kind: "export", Done: done, Total: total})
+	withFX := fx.Style != "" && fx.Style != "none"
+	cut := out
+	if withFX {
+		cut = strings.TrimSuffix(out, filepath.Ext(out)) + ".cut.tmp.mp4"
+		defer os.Remove(cut)
+	}
+	err := media.Render(ctx, p.Source.Path, cut, ranges, loadSettings().Quality, func(done, total int) {
+		send(events, Event{Kind: "export", Done: done, Total: total, Text: "剪辑"})
 	})
 	if errors.Is(err, context.Canceled) {
 		return nil, errors.New("已取消导出")
 	}
 	if err != nil {
 		return nil, err
+	}
+	if withFX {
+		info, err := media.Probe(ctx, cut)
+		if err != nil {
+			return nil, err
+		}
+		plan := effects.BuildPlan(p, fx, info)
+		stages := map[string]string{"install": "安装动效引擎（首次需要几分钟）", "browser": "准备渲染器", "bundle": "打包动效", "render": "渲染动效"}
+		err = effectsEngine().Render(ctx, cut, plan, out, func(stage string, pr float64) {
+			send(events, Event{Kind: "export", Done: int(pr * 1000), Total: 1000, Text: stages[stage]})
+		})
+		if errors.Is(err, context.Canceled) {
+			return nil, errors.New("已取消导出")
+		}
+		if err != nil {
+			return nil, err
+		}
 	}
 	info, err := media.Probe(ctx, out)
 	if err != nil {
@@ -693,6 +737,8 @@ func (s *Studio) serveMedia(w http.ResponseWriter, r *http.Request) {
 	}
 	http.ServeFile(w, r, path)
 }
+
+func effectsEngine() effects.Engine { return effects.Engine{Dir: filepath.Join(dataDir(), "effects-engine")} }
 
 func dataDir() string {
 	dir, err := mygo.App.Path(mygo.PathUserData)

@@ -17,6 +17,7 @@ import (
 
 	"flashcut/internal/clef"
 	"flashcut/internal/editor"
+	"flashcut/internal/effects"
 	"flashcut/internal/media"
 )
 
@@ -33,6 +34,9 @@ func main() {
 	seg := flag.Float64("seg", editor.DefaultSegmentSeconds, "segment length in seconds for new projects")
 	workers := flag.Int("j", 4, "parallel model requests")
 	quality := flag.String("q", string(media.QualityMedium), "export quality: high, medium or small")
+	fx := flag.String("fx", "none", "motion graphics: none, esports or clean")
+	title := flag.String("title", "", "title for the intro and end card (default: file name)")
+	fxDir := flag.String("fx-dir", filepath.Join(os.TempDir(), "flashcut-effects"), "where the Remotion engine is installed")
 	flag.Parse()
 	if flag.NArg() != 1 {
 		log.Fatal("usage: flashcut [-m request]... [-o out.mp4] <video>")
@@ -100,8 +104,37 @@ func main() {
 	if *out == "" {
 		return
 	}
-	if err := media.Render(ctx, src, *out, p.Ranges(), media.Quality(*quality), nil); err != nil {
+	cut := *out
+	if *fx != "none" {
+		cut = strings.TrimSuffix(*out, filepath.Ext(*out)) + ".cut.mp4"
+		defer os.Remove(cut)
+	}
+	start := time.Now()
+	if err := media.Render(ctx, src, cut, p.Ranges(), media.Quality(*quality), nil); err != nil {
 		log.Fatal(err)
+	}
+	log.Printf("cut in %s", time.Since(start).Round(time.Second))
+	if *fx != "none" {
+		info, err := media.Probe(ctx, cut)
+		if err != nil {
+			log.Fatal(err)
+		}
+		s := editor.DefaultEffects()
+		s.Style, s.Title = *fx, *title
+		plan := effects.BuildPlan(p, s, info)
+		log.Printf("%d effects", len(plan.Events))
+		start = time.Now()
+		last := ""
+		err = effects.Engine{Dir: *fxDir}.Render(ctx, cut, plan, *out, func(stage string, pr float64) {
+			if line := fmt.Sprintf("%s %d%%", stage, int(pr*10)*10); line != last {
+				last = line
+				log.Print(line)
+			}
+		})
+		if err != nil {
+			log.Fatal(err)
+		}
+		log.Printf("effects in %s", time.Since(start).Round(time.Second))
 	}
 	log.Printf("wrote %s", *out)
 }

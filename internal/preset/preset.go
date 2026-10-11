@@ -71,6 +71,8 @@ type Template struct {
 	FillGaps          bool          `json:"fillGaps"`
 	InterestThreshold float64       `json:"interestThreshold"`
 	Quality           media.Quality `json:"quality,omitempty"`
+	// Effects are the motion graphics this template suggests on export.
+	Effects *editor.EffectSettings `json:"effects,omitempty"`
 	// Examples are chat suggestions shown with the template.
 	Examples []string `json:"examples,omitempty"`
 
@@ -197,6 +199,10 @@ func Apply(p *editor.Project, t *Template) {
 	}
 	p.Edits.FillGaps = t.FillGaps
 	p.TemplateID, p.TemplateName = t.ID, t.Name
+	if t.Effects != nil {
+		e := *t.Effects
+		p.Effects = &e
+	}
 	// A new segment length only applies before anything was analyzed.
 	if t.SegmentSeconds > 0 && t.SegmentSeconds != p.SegmentSeconds && p.Tokens == 0 {
 		fresh := editor.New(p.ID, p.Source, t.SegmentSeconds)

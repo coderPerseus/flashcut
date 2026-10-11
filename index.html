@@ -162,6 +162,38 @@
       </form>
     </dialog>
 
+    <dialog id="export-dialog">
+      <form method="dialog" class="settings-form">
+        <h3>导出成片</h3>
+        <fieldset>
+          <legend>动效（Remotion）</legend>
+          <label>风格
+            <select id="fx-style">
+              <option value="none">不加动效（最快）</option>
+              <option value="esports">电竞：闪光转场、高能角标、推近震屏</option>
+              <option value="clean">简洁：柔和转场和角标</option>
+            </select>
+          </label>
+          <div id="fx-options" class="fx-grid">
+            <label>标题 <input id="fx-title" autocomplete="off" placeholder="默认用文件名" /></label>
+            <label>副标题 <input id="fx-subtitle" autocomplete="off" placeholder="可选，例如：2026 LCK 决赛" /></label>
+            <label>主色 <input id="fx-accent" type="color" /></label>
+            <label class="check"><input id="fx-intro" type="checkbox" /> 开场标题</label>
+            <label class="check"><input id="fx-transitions" type="checkbox" /> 节点转场</label>
+            <label class="check"><input id="fx-highlights" type="checkbox" /> 高能时刻</label>
+            <label class="check"><input id="fx-ending" type="checkbox" /> 结尾提示</label>
+            <label class="check"><input id="fx-outro" type="checkbox" /> 片尾卡片</label>
+            <label class="check"><input id="fx-progress" type="checkbox" /> 底部进度条</label>
+          </div>
+          <p class="hint muted">高能、转场的位置来自模板里标了“动效节点”的问题；没有模板时用精彩程度最高的片段。第一次加动效会自动安装渲染引擎（约 100 MB），之后每分钟成片大约需要 1 分钟渲染。</p>
+        </fieldset>
+        <div class="actions end">
+          <button value="cancel">取消</button>
+          <button class="primary" value="export">选择位置并导出</button>
+        </div>
+      </form>
+    </dialog>
+
     <dialog id="tpl-dialog" class="wide">
       <div class="tpl-layout">
         <aside class="tpl-list">

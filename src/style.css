@@ -200,6 +200,11 @@ code { font-size: 12px; }
   .editor { overflow: visible; }
 }
 
+/* export */
+.fx-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 14px; }
+.fx-grid label:not(.check) { grid-column: span 2; }
+input[type="color"] { width: 64px; height: 30px; padding: 2px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); }
+
 /* templates */
 .actions.wrap { flex-wrap: wrap; justify-content: flex-end; }
 .note { margin: -4px 0 10px; font-size: 12px; }

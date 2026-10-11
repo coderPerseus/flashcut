@@ -21,6 +21,19 @@ export interface Edits {
   padSeconds: number;
 }
 
+export interface EffectSettings {
+  style: string;
+  title: string;
+  subtitle: string;
+  accent: string;
+  intro: boolean;
+  transitions: boolean;
+  highlights: boolean;
+  ending: boolean;
+  outro: boolean;
+  progressBar: boolean;
+}
+
 /** Event reports progress of a long operation. */
 export interface Event {
   /** Kind is "analyze", "export" or "status". */
@@ -74,6 +87,7 @@ export interface Project {
   tokens: number;
   templateId?: string;
   templateName?: string;
+  effects?: EffectSettings;
   nextRuleId: number;
   updatedAt: string;
 }
@@ -175,6 +189,7 @@ export interface Template {
   fillGaps: boolean;
   interestThreshold: number;
   quality?: Quality;
+  effects?: EffectSettings;
   examples?: string[];
   updatedAt: string;
 }
@@ -236,9 +251,19 @@ export const Studio = {
   deleteTemplate(id: string): Promise<void> {
     return call("Studio.DeleteTemplate", id);
   },
-  /** Export asks where to save, then cuts and joins the selection. */
-  export(id: string, events: Channel<Event>): Promise<ExportResult | null> {
-    return call("Studio.Export", id, events);
+  /**
+   * EffectsFor returns the effect settings to suggest for a project: the
+   * last ones used, else its template's, else the defaults.
+   */
+  effectsFor(id: string): Promise<EffectSettings> {
+    return call("Studio.EffectsFor", id);
+  },
+  /**
+   * Export asks where to save, then cuts and joins the selection and, when
+   * fx.Style is not "none", adds Remotion motion graphics.
+   */
+  export(id: string, fx: EffectSettings, events: Channel<Event>): Promise<ExportResult | null> {
+    return call("Studio.Export", id, fx, events);
   },
   /**
    * ExportTemplate writes a template to a file the user picks. It returns

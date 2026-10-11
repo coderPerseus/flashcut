@@ -135,6 +135,27 @@ type Edits struct {
 	PadSeconds float64 `json:"padSeconds"`
 }
 
+// EffectSettings choose the motion graphics added on export.
+type EffectSettings struct {
+	// Style is "none", "esports" or "clean".
+	Style    string `json:"style"`
+	Title    string `json:"title"`
+	Subtitle string `json:"subtitle"`
+	// Accent is a CSS color.
+	Accent      string `json:"accent"`
+	Intro       bool   `json:"intro"`
+	Transitions bool   `json:"transitions"`
+	Highlights  bool   `json:"highlights"`
+	Ending      bool   `json:"ending"`
+	Outro       bool   `json:"outro"`
+	ProgressBar bool   `json:"progressBar"`
+}
+
+// DefaultEffects are used when neither the project nor its template set any.
+func DefaultEffects() EffectSettings {
+	return EffectSettings{Style: "none", Accent: "#7c5cff", Intro: true, Transitions: true, Highlights: true, Ending: true, Outro: true, ProgressBar: true}
+}
+
 // Message is one chat message.
 type Message struct {
 	Role string    `json:"role"` // "user" or "assistant"
@@ -156,6 +177,8 @@ type Project struct {
 	// TemplateID and TemplateName name the applied template, if any.
 	TemplateID   string `json:"templateId,omitempty"`
 	TemplateName string `json:"templateName,omitempty"`
+	// Effects are the last export's effect settings.
+	Effects *EffectSettings `json:"effects,omitempty"`
 	// NextRuleID numbers rules; ids are never reused, so answers cached for
 	// a deleted rule cannot be mistaken for a new one.
 	NextRuleID int       `json:"nextRuleId"`

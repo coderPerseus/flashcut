@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/egoist/mygo"
+
+	"flashcut/internal/editor"
 )
 
 // selfTest drives the app like a user, for end-to-end checks:
@@ -77,7 +79,11 @@ func selfTest(win *mygo.Window, studio *Studio) {
 			return
 		}
 		e.mu.Lock()
-		res, err := studio.export(context.Background(), e.p, out, nil)
+		fx := editor.DefaultEffects()
+		if style := os.Getenv("FLASHCUT_SELFTEST_FX"); style != "" {
+			fx.Style = style
+		}
+		res, err := studio.export(context.Background(), e.p, out, fx, nil)
 		e.mu.Unlock()
 		if err != nil {
 			log.Printf("selftest: export: %v", err)
