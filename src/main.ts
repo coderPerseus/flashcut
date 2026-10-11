@@ -328,7 +328,9 @@ function reasonAt(r: Range) {
 function showDetail(s: Segment | undefined) {
   const box = $("#detail");
   const p = project();
-  $("#seg-actions").hidden = !(s && s.index === selected);
+  // Keep the row's layout stable: hide the buttons without removing them.
+  $("#seg-actions").hidden = false;
+  $("#seg-actions").classList.toggle("invisible", !(s && s.index === selected));
   if (!s || !p) {
     box.textContent = "点击时间线上的一段可以跳转预览，并手动保留或剪掉。";
     return;
@@ -346,6 +348,7 @@ function showDetail(s: Segment | undefined) {
   }
   if (s.reason) parts.push(escapeHTML(s.reason));
   box.innerHTML = parts.join(" · ");
+  box.title = box.textContent ?? "";
 }
 
 function selectSegment(index: number, seek: boolean) {

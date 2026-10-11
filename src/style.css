@@ -354,3 +354,9 @@ dialog.wide { width: min(1040px, 96vw); height: min(720px, 92vh); }
 .legend button b { font-weight: 400; font-variant-numeric: tabular-nums; }
 .legend button b:empty { display: none; }
 .seg.dim { opacity: 0.15; }
+
+/* The detail row keeps a fixed height so hovering segments never resizes
+   the timeline above it. */
+.detail-row { height: 62px; flex-shrink: 0; overflow: hidden; align-content: start; }
+.detail-row .detail { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-height: 20px; line-height: 20px; }
+.seg-actions.invisible { visibility: hidden; }

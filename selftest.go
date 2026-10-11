@@ -110,6 +110,7 @@ func selfTest(win *mygo.Window, studio *Studio) {
 			}
 		}
 		capture("edit.png")
+		log.Printf("selftest hover heights: %s", eval(`const tl = document.querySelector("#timeline"); const h0 = tl.getBoundingClientRect().height; const segs = [...document.querySelectorAll(".seg")]; const hs = []; for (const i of [5, 60, 120, 180]) { segs[i].dispatchEvent(new MouseEvent("mouseenter")); hs.push(tl.getBoundingClientRect().height); segs[i].dispatchEvent(new MouseEvent("mouseleave")); hs.push(tl.getBoundingClientRect().height); } return h0 + " -> " + hs.join(",")`))
 		eval(`window.flashcut.zoom(12, 1145.3, 1158.8); return ""`)
 		capture("timeline-zoom.png")
 		eval(`document.querySelector("#tl-fit").click(); return ""`)
